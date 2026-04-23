@@ -12,10 +12,10 @@ Requirements:
 - transmissions never appear during the title or gameplay; only between states
 - demo mode skips the transmissions so the auto-play showcase stays fast
 
-Suggested voice:
-- in-universe pilot chatter from command, not an omniscient narrator
-- short, punchy, arcade-flavored lines
-- sample tone: "PATROL WING, HOSTILES ON YOUR AXIS. HOLD THE PICKET."
+Voice and content:
+- read prompt 20 (STORY_BIBLE) for the canon names, factions, and exact transmission lines
+- all on-screen text must be consistent with that bible
+- no new characters or lore may be introduced during implementation
 
 Design notes:
 - reuse the existing font and glow renderer for the text
