@@ -3,7 +3,8 @@ module game
     use vector_math, only: rk, vec2, vec3, transform3, camera3, make_vec3, add3, scale3, project_point, clamp, pi
     use platform, only: platform_init, platform_shutdown, platform_pump_events, platform_key_down, &
         platform_ticks, platform_delay, platform_get_draw_size, platform_begin_frame, platform_present, &
-        platform_audio_beep, platform_save_screenshot, platform_vsync_active, &
+        platform_audio_beep, platform_save_screenshot, platform_vsync_active, platform_mouse_state, &
+        mouse_button_left, mouse_button_right, &
         key_a, key_d, key_f, key_p, key_r, key_s, key_w, &
         key_return, key_escape, key_space, key_f12, key_right, key_left, key_down, key_up, key_lshift
     use model_library, only: wire_model, screen_line, build_player_model, build_enemy_model, build_gate_model, &
@@ -117,6 +118,11 @@ contains
         logical :: return_down
         logical :: space_down
         logical :: fire_down
+        logical :: left_mouse_down
+        integer :: mouse_x
+        integer :: mouse_y
+        integer :: mouse_buttons
+        logical :: mouse_moved
         integer :: width
         integer :: height
         integer :: last_ticks
@@ -170,8 +176,10 @@ contains
             restart_pressed = platform_key_down(key_r)
             pause_pressed = platform_key_down(key_p)
             capture_pressed = platform_key_down(key_f12)
-            start_pressed = return_down .or. space_down
-            fire_pressed = space_down .or. fire_down
+            call platform_mouse_state(mouse_x, mouse_y, mouse_buttons, mouse_moved)
+            left_mouse_down = iand(mouse_buttons, mouse_button_left) /= 0
+            start_pressed = return_down .or. space_down .or. left_mouse_down
+            fire_pressed = space_down .or. fire_down .or. left_mouse_down
 
             if (gs%state == state_title .and. start_pressed .and. .not. prev_start) then
                 call reset_play(gs, .false.)
@@ -200,7 +208,8 @@ contains
             end if
 
             if (.not. gs%paused) then
-                call update_game(gs, dt, width, height, fire_pressed .and. .not. prev_fire)
+                call update_game(gs, dt, width, height, fire_pressed .and. .not. prev_fire, &
+                    mouse_x, mouse_y, mouse_moved, mouse_buttons)
             end if
 
             call render_game(gs, width, height)
@@ -340,12 +349,16 @@ contains
         end do
     end subroutine init_stars
 
-    subroutine update_game(gs, dt, width, height, fire_edge)
+    subroutine update_game(gs, dt, width, height, fire_edge, mouse_x, mouse_y, mouse_moved, mouse_buttons)
         type(game_state_t), intent(inout) :: gs
         real(rk), intent(in) :: dt
         integer, intent(in) :: width
         integer, intent(in) :: height
         logical, intent(in) :: fire_edge
+        integer, intent(in) :: mouse_x
+        integer, intent(in) :: mouse_y
+        logical, intent(in) :: mouse_moved
+        integer, intent(in) :: mouse_buttons
 
         gs%time = gs%time + dt
         gs%fire_cooldown = max(0.0_rk, gs%fire_cooldown - dt)
@@ -360,7 +373,7 @@ contains
         case (state_title)
             call update_title_scene(gs, dt)
         case (state_play)
-            call update_player_control(gs, dt, width, height)
+            call update_player_control(gs, dt, width, height, mouse_x, mouse_y, mouse_moved, mouse_buttons)
             call update_enemies(gs, dt)
             call update_particles(gs, dt)
             call update_spawning(gs, dt)
@@ -407,19 +420,27 @@ contains
         call update_particles(gs, dt)
     end subroutine update_title_scene
 
-    subroutine update_player_control(gs, dt, width, height)
+    subroutine update_player_control(gs, dt, width, height, mouse_x, mouse_y, mouse_moved, mouse_buttons)
         type(game_state_t), intent(inout) :: gs
         real(rk), intent(in) :: dt
         integer, intent(in) :: width
         integer, intent(in) :: height
+        integer, intent(in) :: mouse_x
+        integer, intent(in) :: mouse_y
+        logical, intent(in) :: mouse_moved
+        integer, intent(in) :: mouse_buttons
         real(rk) :: axis_x
         real(rk) :: axis_y
         real(rk) :: aim_speed
+        real(rk) :: target_x
+        real(rk) :: target_y
+        real(rk) :: sensitivity
         logical :: move_right
         logical :: move_left
         logical :: move_up
         logical :: move_down
         logical :: precision
+        logical :: right_mouse
 
         axis_x = 0.0_rk
         axis_y = 0.0_rk
@@ -432,7 +453,8 @@ contains
         if (platform_key_down(key_up)) move_up = .true.
         move_down = platform_key_down(key_s)
         if (platform_key_down(key_down)) move_down = .true.
-        precision = platform_key_down(key_lshift)
+        right_mouse = iand(mouse_buttons, mouse_button_right) /= 0
+        precision = platform_key_down(key_lshift) .or. right_mouse
 
         if (move_right) axis_x = axis_x + 1.0_rk
         if (move_left) axis_x = axis_x - 1.0_rk
@@ -440,8 +462,19 @@ contains
         if (move_down) axis_y = axis_y - 1.0_rk
 
         aim_speed = merge(0.72_rk, 1.85_rk, precision)
-        gs%reticle_x = clamp(gs%reticle_x + axis_x * aim_speed * dt, -0.92_rk, 0.92_rk)
-        gs%reticle_y = clamp(gs%reticle_y + axis_y * aim_speed * dt, -0.72_rk, 0.72_rk)
+
+        if (mouse_moved .and. width > 0 .and. height > 0) then
+            sensitivity = merge(0.55_rk, 1.0_rk, precision)
+            target_x = (real(mouse_x, rk) - 0.5_rk * real(width, rk)) / (0.42_rk * real(width, rk))
+            target_y = (0.5_rk * real(height, rk) - real(mouse_y, rk)) / (0.38_rk * real(height, rk))
+            target_x = gs%reticle_x + (target_x - gs%reticle_x) * sensitivity
+            target_y = gs%reticle_y + (target_y - gs%reticle_y) * sensitivity
+            gs%reticle_x = clamp(target_x, -0.92_rk, 0.92_rk)
+            gs%reticle_y = clamp(target_y, -0.72_rk, 0.72_rk)
+        else
+            gs%reticle_x = clamp(gs%reticle_x + axis_x * aim_speed * dt, -0.92_rk, 0.92_rk)
+            gs%reticle_y = clamp(gs%reticle_y + axis_y * aim_speed * dt, -0.72_rk, 0.72_rk)
+        end if
 
         if (width < height) then
             gs%reticle_y = clamp(gs%reticle_y, -0.58_rk, 0.58_rk)
@@ -1117,7 +1150,7 @@ contains
             end block
         end if
         call draw_centered_text("PRESS ENTER OR SPACE", width / 2, height - height / 5, max(4, width / 230), 255, 235, 80, pulse)
-        call draw_centered_text("WASD OR ARROWS AIM   SPACE FIRE   F12 CAPTURE", width / 2, height - height / 8, small_unit, 0, 190, 255, 185)
+        call draw_centered_text("MOUSE OR WASD AIM   CLICK OR SPACE FIRE   F12 CAPTURE", width / 2, height - height / 8, small_unit, 0, 190, 255, 185)
     end subroutine render_title
 
     subroutine render_game_over(gs, width, height)

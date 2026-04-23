@@ -20,6 +20,10 @@ static VsVoice g_voices[VS_AUDIO_VOICES];
 static int g_sample_rate = 48000;
 static int g_audio_ok = 0;
 static int g_vsync_on = 0;
+static int g_mouse_x = 0;
+static int g_mouse_y = 0;
+static int g_mouse_buttons = 0;
+static int g_mouse_moved_frame = 0;
 
 static void vs_audio_callback(void *userdata, Uint8 *stream, int len) {
     (void)userdata;
@@ -95,6 +99,7 @@ int vs_init(const char *title, int width, int height) {
     }
 
     SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_BLEND);
+    SDL_ShowCursor(SDL_DISABLE);
 
     SDL_AudioSpec want;
     SDL_AudioSpec have;
@@ -138,13 +143,38 @@ int vs_pump_events(void) {
     SDL_Event event;
     int quit = 0;
 
+    g_mouse_moved_frame = 0;
     while (SDL_PollEvent(&event)) {
-        if (event.type == SDL_QUIT) {
-            quit = 1;
+        switch (event.type) {
+            case SDL_QUIT:
+                quit = 1;
+                break;
+            case SDL_MOUSEMOTION:
+                g_mouse_x = event.motion.x;
+                g_mouse_y = event.motion.y;
+                if (event.motion.xrel != 0 || event.motion.yrel != 0) {
+                    g_mouse_moved_frame = 1;
+                }
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONUP:
+                g_mouse_x = event.button.x;
+                g_mouse_y = event.button.y;
+                break;
+            default:
+                break;
         }
     }
 
+    g_mouse_buttons = SDL_GetMouseState(NULL, NULL);
     return quit;
+}
+
+void vs_mouse_state(int *x, int *y, int *buttons, int *moved) {
+    if (x) *x = g_mouse_x;
+    if (y) *y = g_mouse_y;
+    if (buttons) *buttons = g_mouse_buttons;
+    if (moved) *moved = g_mouse_moved_frame;
 }
 
 int vs_key_down(int scancode) {

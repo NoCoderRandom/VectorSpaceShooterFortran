@@ -1,10 +1,18 @@
 # Controls
 
-`WASD` or arrow keys move the reticle.
+## Aim
 
-`Left Shift` slows reticle movement for precision shots.
+Move the mouse, or use `WASD` / arrow keys. Whichever you touch last wins — you can swap mid-fight.
 
-`Space` or `F` fires.
+## Fire
+
+Left mouse button, `Space`, or `F`.
+
+## Precision
+
+Hold `Left Shift` or the right mouse button to slow aim and sharpen shots.
+
+## Other
 
 `P` pauses during play.
 
@@ -13,6 +21,8 @@
 `F12` saves `capture.bmp`.
 
 `Esc` quits.
+
+The OS cursor is hidden while the game is running — the in-game reticle is your cursor.
 
 ## Demo Mode
 

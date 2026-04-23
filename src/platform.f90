@@ -34,6 +34,11 @@ module platform
     public :: platform_audio_beep
     public :: platform_save_screenshot
     public :: platform_vsync_active
+    public :: platform_mouse_state
+
+    integer, parameter, public :: mouse_button_left = 1
+    integer, parameter, public :: mouse_button_right = 4
+    integer, parameter, public :: mouse_button_middle = 2
 
     interface
         function c_vs_init(title, width, height) bind(c, name="vs_init") result(ok)
@@ -109,6 +114,14 @@ module platform
             import :: c_int
             integer(c_int) :: on
         end function
+
+        subroutine c_vs_mouse_state(x, y, buttons, moved) bind(c, name="vs_mouse_state")
+            import :: c_int
+            integer(c_int), intent(out) :: x
+            integer(c_int), intent(out) :: y
+            integer(c_int), intent(out) :: buttons
+            integer(c_int), intent(out) :: moved
+        end subroutine
     end interface
 
 contains
@@ -201,6 +214,23 @@ contains
     logical function platform_vsync_active()
         platform_vsync_active = c_vs_vsync_active() /= 0
     end function platform_vsync_active
+
+    subroutine platform_mouse_state(x, y, buttons, moved)
+        integer, intent(out) :: x
+        integer, intent(out) :: y
+        integer, intent(out) :: buttons
+        logical, intent(out) :: moved
+        integer(c_int) :: cx
+        integer(c_int) :: cy
+        integer(c_int) :: cb
+        integer(c_int) :: cm
+
+        call c_vs_mouse_state(cx, cy, cb, cm)
+        x = int(cx)
+        y = int(cy)
+        buttons = int(cb)
+        moved = cm /= 0
+    end subroutine platform_mouse_state
 
     subroutine make_c_string(text, out)
         character(len=*), intent(in) :: text
