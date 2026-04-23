@@ -17,11 +17,15 @@ module game
     integer, parameter :: state_title = 0
     integer, parameter :: state_play = 1
     integer, parameter :: state_game_over = 2
+    integer, parameter :: state_victory = 3
 
     integer, parameter :: max_stars = 220
     integer, parameter :: max_enemies = 48
     integer, parameter :: max_particles = 420
     integer, parameter :: max_lines = 4096
+
+    integer, parameter :: waves_per_sector = 3
+    integer, parameter :: max_sector = 3
 
     character(len=*), parameter :: high_score_path = "highscore.dat"
 
@@ -66,8 +70,11 @@ module game
         integer :: score = 0
         integer :: high_score = 0
         integer :: wave = 1
+        integer :: sector = 1
+        integer :: sector_wave = 1
         integer :: lives = 3
         integer :: kills = 0
+        integer :: kills_sector_wave = 0
         integer :: spawn_serial = 0
         real(rk) :: shield = 1.0_rk
         real(rk) :: reticle_x = 0.0_rk
@@ -81,6 +88,8 @@ module game
         real(rk) :: message_timer = 0.0_rk
         real(rk) :: screen_shake = 0.0_rk
         real(rk) :: time = 0.0_rk
+        real(rk) :: sector_intro_timer = 0.0_rk
+        real(rk) :: demo_palette_timer = 0.0_rk
         logical :: demo_mode = .false.
         logical :: paused = .false.
         character(len=48) :: message = ""
@@ -187,7 +196,7 @@ contains
                 call platform_audio_beep(640.0, 0.12, 0.14)
             end if
 
-            if (gs%state == state_game_over) then
+            if (gs%state == state_game_over .or. gs%state == state_victory) then
                 if ((restart_pressed .and. .not. prev_restart) .or. (start_pressed .and. .not. prev_start)) then
                     call reset_play(gs, .false.)
                 end if
@@ -300,8 +309,11 @@ contains
         gs%demo_mode = demo_mode
         gs%score = 0
         gs%wave = 1
+        gs%sector = 1
+        gs%sector_wave = 1
         gs%lives = 3
         gs%kills = 0
+        gs%kills_sector_wave = 0
         gs%spawn_serial = 0
         gs%shield = 1.0_rk
         gs%reticle_x = 0.0_rk
@@ -311,10 +323,12 @@ contains
         gs%spawn_timer = 0.05_rk
         gs%danger_timer = 0.0_rk
         gs%message_timer = 2.0_rk
+        gs%sector_intro_timer = 2.6_rk
+        gs%demo_palette_timer = 0.0_rk
         if (demo_mode) then
             gs%message = "DEMO WAVE ONLINE"
         else
-            gs%message = "WAVE 1 READY"
+            gs%message = "PHOSPHOR-LEAD CLEARED FOR LAUNCH"
         end if
         gs%paused = .false.
         do i = 1, max_enemies
@@ -366,6 +380,7 @@ contains
         gs%danger_timer = max(0.0_rk, gs%danger_timer - dt)
         gs%message_timer = max(0.0_rk, gs%message_timer - dt)
         gs%screen_shake = max(0.0_rk, gs%screen_shake - dt * 1.8_rk)
+        gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
 
         call update_stars(gs, dt, merge(9.0_rk, 3.2_rk, gs%state == state_play))
 
@@ -383,6 +398,9 @@ contains
             end if
         case (state_game_over)
             call update_enemies(gs, dt * 0.35_rk)
+            call update_particles(gs, dt)
+        case (state_victory)
+            call update_enemies(gs, dt * 0.25_rk)
             call update_particles(gs, dt)
         end select
     end subroutine update_game
@@ -777,8 +795,10 @@ contains
 
         if (gs%enemies(index)%hp <= 0) then
             gs%enemies(index)%active = .false.
-            gs%score = gs%score + 100 + gs%wave * 25 + max(0, nint((22.0_rk - pos%z) * 5.0_rk))
+            gs%score = gs%score + nint(real(100 + gs%wave * 25 + max(0, nint((22.0_rk - pos%z) * 5.0_rk)), rk) &
+                * sector_score_mult(gs%sector))
             gs%kills = gs%kills + 1
+            gs%kills_sector_wave = gs%kills_sector_wave + 1
             if (gs%score > gs%high_score) then
                 gs%high_score = gs%score
                 if (.not. gs%demo_mode) call save_high_score(gs%high_score)
@@ -789,12 +809,8 @@ contains
             gs%message_timer = 0.55_rk
             call platform_audio_beep(180.0, 0.09, 0.15)
             call platform_audio_beep(90.0, 0.13, 0.12)
-            if (gs%kills >= gs%wave * 7) then
-                gs%wave = gs%wave + 1
-                gs%message = "WAVE UP"
-                gs%message_timer = 1.1_rk
-                call platform_audio_beep(460.0, 0.08, 0.14)
-                call platform_audio_beep(690.0, 0.09, 0.12)
+            if (gs%kills_sector_wave >= sector_wave_quota(gs%sector_wave)) then
+                call advance_wave(gs)
             end if
         else
             gs%score = gs%score + 25
@@ -802,6 +818,104 @@ contains
             call platform_audio_beep(360.0, 0.04, 0.12)
         end if
     end subroutine damage_enemy
+
+    pure integer function sector_wave_quota(sector_wave) result(quota)
+        integer, intent(in) :: sector_wave
+        quota = 6 + sector_wave * 2
+    end function sector_wave_quota
+
+    pure real(rk) function sector_score_mult(sector) result(mult)
+        integer, intent(in) :: sector
+        select case (sector)
+        case (1); mult = 1.0_rk
+        case (2); mult = 1.5_rk
+        case default; mult = 2.0_rk
+        end select
+    end function sector_score_mult
+
+    subroutine advance_wave(gs)
+        type(game_state_t), intent(inout) :: gs
+
+        gs%kills_sector_wave = 0
+        gs%wave = gs%wave + 1
+        gs%sector_wave = gs%sector_wave + 1
+
+        if (gs%sector_wave > waves_per_sector) then
+            if (gs%sector >= max_sector) then
+                gs%state = state_victory
+                gs%message = "GATE IS DARK"
+                gs%message_timer = 99.0_rk
+                call platform_audio_beep(180.0, 0.18, 0.18)
+                call platform_audio_beep(270.0, 0.22, 0.16)
+                call platform_audio_beep(360.0, 0.30, 0.14)
+                if (.not. gs%demo_mode .and. gs%score > gs%high_score) then
+                    gs%high_score = gs%score
+                    call save_high_score(gs%high_score)
+                end if
+                return
+            end if
+            gs%sector = gs%sector + 1
+            gs%sector_wave = 1
+            gs%shield = min(1.0_rk, gs%shield + 0.5_rk)
+            gs%sector_intro_timer = 2.8_rk
+            gs%message = sector_name(gs%sector)
+            gs%message_timer = 2.4_rk
+            call platform_audio_beep(320.0, 0.10, 0.16)
+            call platform_audio_beep(480.0, 0.12, 0.14)
+            call platform_audio_beep(640.0, 0.14, 0.12)
+        else
+            gs%message = "WAVE UP"
+            gs%message_timer = 1.1_rk
+            call platform_audio_beep(460.0, 0.08, 0.14)
+            call platform_audio_beep(690.0, 0.09, 0.12)
+        end if
+    end subroutine advance_wave
+
+    pure function sector_name(sector) result(name)
+        integer, intent(in) :: sector
+        character(len=48) :: name
+        select case (sector)
+        case (1); name = "SECTOR I - OUTER PICKET"
+        case (2); name = "SECTOR II - ASTEROID LANE"
+        case default; name = "SECTOR III - STRONGHOLD"
+        end select
+    end function sector_name
+
+    pure subroutine sector_palette_primary(sector, r, g, b)
+        integer, intent(in) :: sector
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+        select case (sector)
+        case (1); r = 0;   g = 200; b = 255
+        case (2); r = 210; g = 110; b = 255
+        case default; r = 255; g = 130; b = 60
+        end select
+    end subroutine sector_palette_primary
+
+    pure subroutine sector_palette_accent(sector, r, g, b)
+        integer, intent(in) :: sector
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+        select case (sector)
+        case (1); r = 255; g = 220; b = 90
+        case (2); r = 120; g = 255; b = 200
+        case default; r = 255; g = 240; b = 110
+        end select
+    end subroutine sector_palette_accent
+
+    pure subroutine sector_palette_dim(sector, r, g, b)
+        integer, intent(in) :: sector
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+        select case (sector)
+        case (1); r = 0;   g = 80;  b = 120
+        case (2); r = 80;  g = 30;  b = 110
+        case default; r = 110; g = 50; b = 20
+        end select
+    end subroutine sector_palette_dim
 
     subroutine player_hit(gs, pos)
         type(game_state_t), intent(inout) :: gs
