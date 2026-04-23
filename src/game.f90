@@ -8,7 +8,7 @@ module game
         key_a, key_d, key_f, key_p, key_r, key_s, key_w, &
         key_return, key_escape, key_space, key_f12, key_right, key_left, key_down, key_up, key_lshift
     use model_library, only: wire_model, screen_line, build_player_model, build_enemy_model, build_gate_model, &
-        build_shield_gate_model, append_model_lines
+        build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
     implicit none
@@ -52,6 +52,9 @@ module game
         real(rk) :: flash = 0.0_rk
         integer :: pattern = 1
         integer :: hp = 1
+        integer :: hp_max = 1
+        logical :: is_boss = .false.
+        integer :: boss_kind = 0
     end type enemy_t
 
     type :: particle_t
@@ -90,6 +93,12 @@ module game
         real(rk) :: time = 0.0_rk
         real(rk) :: sector_intro_timer = 0.0_rk
         real(rk) :: demo_palette_timer = 0.0_rk
+        real(rk) :: boss_intro_timer = 0.0_rk
+        real(rk) :: boss_victory_timer = 0.0_rk
+        real(rk) :: boss_attack_timer = 0.0_rk
+        real(rk) :: boss_attack_flash = 0.0_rk
+        logical :: boss_fight = .false.
+        integer :: boss_cleared_sector = 0
         logical :: demo_mode = .false.
         logical :: paused = .false.
         character(len=48) :: message = ""
@@ -98,6 +107,7 @@ module game
         type(particle_t) :: particles(max_particles)
         type(wire_model) :: player_model
         type(wire_model) :: enemy_model
+        type(wire_model) :: boss_models(max_sector)
         type(wire_model) :: gate_model
         type(wire_model) :: shield_gate_model
         type(screen_line) :: lines(max_lines)
@@ -268,6 +278,9 @@ contains
 
         call build_player_model(gs%player_model)
         call build_enemy_model(gs%enemy_model)
+        call build_harrower_model(gs%boss_models(1))
+        call build_seer_model(gs%boss_models(2))
+        call build_maw_model(gs%boss_models(3))
         call build_gate_model(gs%gate_model)
         call build_shield_gate_model(gs%shield_gate_model)
         call init_stars(gs)
@@ -325,6 +338,12 @@ contains
         gs%message_timer = 2.0_rk
         gs%sector_intro_timer = 2.6_rk
         gs%demo_palette_timer = 0.0_rk
+        gs%boss_intro_timer = 0.0_rk
+        gs%boss_victory_timer = 0.0_rk
+        gs%boss_attack_timer = 0.0_rk
+        gs%boss_attack_flash = 0.0_rk
+        gs%boss_fight = .false.
+        gs%boss_cleared_sector = 0
         if (demo_mode) then
             gs%message = "DEMO WAVE ONLINE"
         else
@@ -381,6 +400,9 @@ contains
         gs%message_timer = max(0.0_rk, gs%message_timer - dt)
         gs%screen_shake = max(0.0_rk, gs%screen_shake - dt * 1.8_rk)
         gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
+        gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
+
+        call update_boss_timers(gs, dt)
 
         call update_stars(gs, dt, merge(9.0_rk, 3.2_rk, gs%state == state_play))
 
@@ -392,8 +414,10 @@ contains
             call update_enemies(gs, dt)
             call update_particles(gs, dt)
             call update_spawning(gs, dt)
+            call update_boss_attack(gs, dt)
             call update_demo_autopilot(gs, dt, width, height)
-            if ((fire_edge .or. (gs%demo_mode .and. gs%fire_cooldown <= 0.0_rk)) .and. gs%fire_cooldown <= 0.0_rk) then
+            if (gs%state == state_play .and. &
+                (fire_edge .or. (gs%demo_mode .and. gs%fire_cooldown <= 0.0_rk)) .and. gs%fire_cooldown <= 0.0_rk) then
                 call fire_weapon(gs, width, height)
             end if
         case (state_game_over)
@@ -404,6 +428,29 @@ contains
             call update_particles(gs, dt)
         end select
     end subroutine update_game
+
+    subroutine update_boss_timers(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        logical :: intro_was_active
+
+        if (gs%state /= state_play) return
+
+        intro_was_active = gs%boss_intro_timer > 0.0_rk
+        gs%boss_intro_timer = max(0.0_rk, gs%boss_intro_timer - dt)
+        if (intro_was_active .and. gs%boss_intro_timer <= 0.0_rk .and. gs%boss_fight) then
+            gs%message = trim(boss_name(gs%sector)) // " ENGAGED"
+            gs%message_timer = 1.1_rk
+            gs%boss_attack_timer = min(gs%boss_attack_timer, 1.25_rk)
+            call platform_audio_beep(260.0, 0.14, 0.16)
+            call platform_audio_beep(520.0, 0.09, 0.12)
+        end if
+
+        if (gs%boss_victory_timer > 0.0_rk) then
+            gs%boss_victory_timer = max(0.0_rk, gs%boss_victory_timer - dt)
+            if (gs%boss_victory_timer <= 0.0_rk) call complete_boss_victory(gs)
+        end if
+    end subroutine update_boss_timers
 
     subroutine update_stars(gs, dt, speed_scale)
         type(game_state_t), intent(inout) :: gs
@@ -579,8 +626,17 @@ contains
         do i = 1, max_enemies
             if (.not. gs%enemies(i)%active) cycle
             gs%enemies(i)%age = gs%enemies(i)%age + dt
-            gs%enemies(i)%z = gs%enemies(i)%z - gs%enemies(i)%speed * dt
             gs%enemies(i)%flash = max(0.0_rk, gs%enemies(i)%flash - dt * 4.0_rk)
+            if (gs%enemies(i)%is_boss) then
+                if (gs%boss_intro_timer > 0.0_rk) then
+                    gs%enemies(i)%z = max(boss_hold_z(gs%enemies(i)%boss_kind), gs%enemies(i)%z - gs%enemies(i)%speed * dt)
+                else
+                    gs%enemies(i)%z = boss_hold_z(gs%enemies(i)%boss_kind)
+                end if
+                cycle
+            end if
+
+            gs%enemies(i)%z = gs%enemies(i)%z - gs%enemies(i)%speed * dt
             pos = enemy_position(gs%enemies(i))
             breached = pos%z < 1.25_rk
             if (breached) then
@@ -616,6 +672,8 @@ contains
         real(rk), intent(in) :: dt
         real(rk) :: interval
         real(rk) :: rz
+
+        if (gs%boss_fight .or. gs%boss_intro_timer > 0.0_rk .or. gs%boss_victory_timer > 0.0_rk) return
 
         gs%spawn_timer = gs%spawn_timer - dt
         if (gs%spawn_timer > 0.0_rk) return
@@ -657,6 +715,9 @@ contains
         gs%enemies(slot)%phase = rz * 2.0_rk * pi
         gs%enemies(slot)%flash = 0.0_rk
         gs%enemies(slot)%hp = merge(2, 1, gs%wave >= 4 .and. mod(gs%spawn_serial, 4) == 0)
+        gs%enemies(slot)%hp_max = gs%enemies(slot)%hp
+        gs%enemies(slot)%is_boss = .false.
+        gs%enemies(slot)%boss_kind = 0
         gs%enemies(slot)%speed = 3.6_rk + real(gs%wave, rk) * 0.22_rk + rz * 1.35_rk
         if (present(z_override)) then
             gs%enemies(slot)%z = z_override
@@ -717,6 +778,24 @@ contains
         real(rk) :: orbit_w
 
         enemy_position = vec3(enemy%x, enemy%y, enemy%z)
+        if (enemy%is_boss) then
+            select case (enemy%boss_kind)
+            case (1)
+                enemy_position%x = enemy_position%x + 1.45_rk * sin(enemy%age * 0.55_rk + enemy%phase)
+                enemy_position%y = enemy_position%y + 0.28_rk * sin(enemy%age * 0.42_rk)
+                enemy_position%z = enemy_position%z + 0.25_rk * cos(enemy%age * 0.38_rk)
+            case (2)
+                enemy_position%x = enemy_position%x + 0.95_rk * sin(enemy%age * 0.48_rk + enemy%phase)
+                enemy_position%y = enemy_position%y + 0.55_rk * cos(enemy%age * 0.66_rk)
+                enemy_position%z = enemy_position%z + 0.35_rk * sin(enemy%age * 0.36_rk)
+            case default
+                enemy_position%x = enemy_position%x + 0.62_rk * sin(enemy%age * 0.34_rk + enemy%phase)
+                enemy_position%y = enemy_position%y + 0.18_rk * cos(enemy%age * 0.50_rk)
+                enemy_position%z = enemy_position%z + 0.42_rk * sin(enemy%age * 0.28_rk)
+            end select
+            return
+        end if
+
         select case (enemy%pattern)
         case (1)
             enemy_position%y = enemy_position%y + 0.13_rk * sin(enemy%age * 2.4_rk + enemy%phase)
@@ -781,7 +860,12 @@ contains
             if (.not. gs%enemies(i)%active) cycle
             pos = enemy_position(gs%enemies(i))
             if (.not. project_point(pos, cam, width, height, screen, depth, scale_px)) cycle
-            radius_px = max(20.0_rk, gs%enemy_model%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
+            if (gs%enemies(i)%is_boss) then
+                radius_px = max(42.0_rk, gs%boss_models(gs%enemies(i)%boss_kind)%radius * &
+                    boss_scale(gs%enemies(i)%boss_kind, pos%z) * scale_px * 0.88_rk)
+            else
+                radius_px = max(20.0_rk, gs%enemy_model%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
+            end if
             dist = sqrt((screen%x - cx) ** 2 + (screen%y - cy) ** 2)
             if (dist <= radius_px .and. depth < best_depth) then
                 best = i
@@ -806,6 +890,10 @@ contains
 
         if (gs%enemies(index)%hp <= 0) then
             gs%enemies(index)%active = .false.
+            if (gs%enemies(index)%is_boss) then
+                call defeat_boss(gs, index, pos)
+                return
+            end if
             gs%score = gs%score + nint(real(100 + gs%wave * 25 + max(0, nint((22.0_rk - pos%z) * 5.0_rk)), rk) &
                 * sector_score_mult(gs%sector))
             gs%kills = gs%kills + 1
@@ -824,9 +912,16 @@ contains
                 call advance_wave(gs)
             end if
         else
-            gs%score = gs%score + 25
-            call spawn_explosion(gs, pos, 12, 255, 255, 180)
-            call platform_audio_beep(360.0, 0.04, 0.12)
+            if (gs%enemies(index)%is_boss) then
+                gs%score = gs%score + 35 * gs%sector
+                call spawn_explosion(gs, pos, 18, 255, 255, 180)
+                call platform_audio_beep(300.0, 0.045, 0.12)
+                call platform_audio_beep(150.0, 0.055, 0.08)
+            else
+                gs%score = gs%score + 25
+                call spawn_explosion(gs, pos, 12, 255, 255, 180)
+                call platform_audio_beep(360.0, 0.04, 0.12)
+            end if
         end if
     end subroutine damage_enemy
 
@@ -848,39 +943,151 @@ contains
         type(game_state_t), intent(inout) :: gs
 
         gs%kills_sector_wave = 0
+
+        if (gs%sector_wave >= waves_per_sector) then
+            call start_boss_entrance(gs)
+            return
+        end if
+
         gs%wave = gs%wave + 1
         gs%sector_wave = gs%sector_wave + 1
-
-        if (gs%sector_wave > waves_per_sector) then
-            if (gs%sector >= max_sector) then
-                gs%state = state_victory
-                gs%message = "GATE IS DARK"
-                gs%message_timer = 99.0_rk
-                call platform_audio_beep(180.0, 0.18, 0.18)
-                call platform_audio_beep(270.0, 0.22, 0.16)
-                call platform_audio_beep(360.0, 0.30, 0.14)
-                if (.not. gs%demo_mode .and. gs%score > gs%high_score) then
-                    gs%high_score = gs%score
-                    call save_high_score(gs%high_score)
-                end if
-                return
-            end if
-            gs%sector = gs%sector + 1
-            gs%sector_wave = 1
-            gs%shield = min(1.0_rk, gs%shield + 0.5_rk)
-            gs%sector_intro_timer = 2.8_rk
-            gs%message = sector_name(gs%sector)
-            gs%message_timer = 2.4_rk
-            call platform_audio_beep(320.0, 0.10, 0.16)
-            call platform_audio_beep(480.0, 0.12, 0.14)
-            call platform_audio_beep(640.0, 0.14, 0.12)
-        else
-            gs%message = "WAVE UP"
-            gs%message_timer = 1.1_rk
-            call platform_audio_beep(460.0, 0.08, 0.14)
-            call platform_audio_beep(690.0, 0.09, 0.12)
-        end if
+        gs%message = "WAVE UP"
+        gs%message_timer = 1.1_rk
+        call platform_audio_beep(460.0, 0.08, 0.14)
+        call platform_audio_beep(690.0, 0.09, 0.12)
     end subroutine advance_wave
+
+    subroutine start_boss_entrance(gs)
+        type(game_state_t), intent(inout) :: gs
+        integer :: slot
+        integer :: i
+        real(rk) :: rz
+
+        do i = 1, max_enemies
+            gs%enemies(i)%active = .false.
+        end do
+
+        slot = 1
+        call random_number(rz)
+        gs%enemies(slot)%active = .true.
+        gs%enemies(slot)%is_boss = .true.
+        gs%enemies(slot)%boss_kind = gs%sector
+        gs%enemies(slot)%hp_max = boss_hp(gs%sector)
+        gs%enemies(slot)%hp = gs%enemies(slot)%hp_max
+        gs%enemies(slot)%pattern = 0
+        gs%enemies(slot)%age = 0.0_rk
+        gs%enemies(slot)%phase = rz * 2.0_rk * pi
+        gs%enemies(slot)%flash = 0.0_rk
+        gs%enemies(slot)%x = 0.0_rk
+        gs%enemies(slot)%y = 0.0_rk
+        gs%enemies(slot)%z = 38.0_rk
+        gs%enemies(slot)%vx = 0.0_rk
+        gs%enemies(slot)%vy = 0.0_rk
+        gs%enemies(slot)%speed = 13.5_rk
+        gs%boss_fight = .true.
+        gs%boss_intro_timer = 1.75_rk
+        gs%boss_victory_timer = 0.0_rk
+        gs%boss_attack_timer = 2.35_rk
+        gs%boss_attack_flash = 0.0_rk
+        gs%boss_cleared_sector = 0
+        gs%sector_intro_timer = 0.0_rk
+        gs%message = "WARNING - " // trim(boss_name(gs%sector))
+        gs%message_timer = 2.0_rk
+        gs%screen_shake = max(gs%screen_shake, 0.18_rk)
+        call platform_audio_beep(110.0, 0.22, 0.18)
+        call platform_audio_beep(165.0, 0.22, 0.15)
+        call platform_audio_beep(220.0, 0.26, 0.12)
+    end subroutine start_boss_entrance
+
+    subroutine defeat_boss(gs, index, pos)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: index
+        type(vec3), intent(in) :: pos
+        integer :: ar
+        integer :: ag
+        integer :: ab
+        integer :: pr
+        integer :: pg
+        integer :: pb
+
+        call sector_palette_accent(gs%enemies(index)%boss_kind, ar, ag, ab)
+        call sector_palette_primary(gs%enemies(index)%boss_kind, pr, pg, pb)
+        gs%score = gs%score + nint(real(1200 + 500 * gs%enemies(index)%boss_kind, rk) * sector_score_mult(gs%sector))
+        if (gs%score > gs%high_score) then
+            gs%high_score = gs%score
+            if (.not. gs%demo_mode) call save_high_score(gs%high_score)
+        end if
+        call spawn_explosion(gs, pos, 120, ar, ag, ab)
+        call spawn_explosion(gs, pos, 72, pr, pg, pb)
+        gs%screen_shake = max(gs%screen_shake, 1.05_rk)
+        gs%message = trim(boss_name(gs%enemies(index)%boss_kind)) // " DOWN"
+        gs%message_timer = 1.8_rk
+        gs%boss_fight = .false.
+        gs%boss_intro_timer = 0.0_rk
+        gs%boss_attack_timer = 0.0_rk
+        gs%boss_attack_flash = 0.0_rk
+        gs%boss_victory_timer = 1.45_rk
+        gs%boss_cleared_sector = gs%enemies(index)%boss_kind
+        call platform_audio_beep(90.0, 0.28, 0.22)
+        call platform_audio_beep(180.0, 0.22, 0.18)
+        call platform_audio_beep(360.0, 0.18, 0.16)
+        call platform_audio_beep(720.0, 0.14, 0.11)
+    end subroutine defeat_boss
+
+    subroutine complete_boss_victory(gs)
+        type(game_state_t), intent(inout) :: gs
+
+        if (gs%boss_cleared_sector >= max_sector) then
+            gs%state = state_victory
+            gs%message = "GATE IS DARK"
+            gs%message_timer = 99.0_rk
+            call platform_audio_beep(180.0, 0.18, 0.18)
+            call platform_audio_beep(270.0, 0.22, 0.16)
+            call platform_audio_beep(360.0, 0.30, 0.14)
+            if (.not. gs%demo_mode .and. gs%score > gs%high_score) then
+                gs%high_score = gs%score
+                call save_high_score(gs%high_score)
+            end if
+            return
+        end if
+
+        gs%sector = min(max_sector, gs%boss_cleared_sector + 1)
+        gs%sector_wave = 1
+        gs%wave = gs%wave + 1
+        gs%kills_sector_wave = 0
+        gs%shield = min(1.0_rk, gs%shield + 0.5_rk)
+        gs%sector_intro_timer = 2.8_rk
+        gs%message = sector_name(gs%sector)
+        gs%message_timer = 2.4_rk
+        gs%spawn_timer = 1.2_rk
+        gs%boss_cleared_sector = 0
+        call platform_audio_beep(320.0, 0.10, 0.16)
+        call platform_audio_beep(480.0, 0.12, 0.14)
+        call platform_audio_beep(640.0, 0.14, 0.12)
+    end subroutine complete_boss_victory
+
+    subroutine update_boss_attack(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        integer :: index
+        type(vec3) :: pos
+
+        if (.not. gs%boss_fight) return
+        if (gs%boss_intro_timer > 0.0_rk .or. gs%boss_victory_timer > 0.0_rk) return
+
+        index = active_boss_index(gs)
+        if (index <= 0) return
+
+        gs%boss_attack_timer = gs%boss_attack_timer - dt
+        if (gs%boss_attack_timer > 0.0_rk) return
+
+        gs%boss_attack_timer = max(1.45_rk, 2.25_rk - real(gs%sector, rk) * 0.22_rk)
+        gs%boss_attack_flash = 0.26_rk
+        pos = enemy_position(gs%enemies(index))
+        call platform_audio_beep(95.0, 0.10, 0.16)
+        call platform_audio_beep(190.0, 0.08, 0.12)
+        call player_hit(gs, pos)
+    end subroutine update_boss_attack
 
     pure function sector_name(sector) result(name)
         integer, intent(in) :: sector
@@ -927,6 +1134,34 @@ contains
         case default; r = 110; g = 50; b = 20
         end select
     end subroutine sector_palette_dim
+
+    pure function boss_name(sector) result(name)
+        integer, intent(in) :: sector
+        character(len=24) :: name
+        select case (sector)
+        case (1); name = "HARROWER"
+        case (2); name = "SEER"
+        case default; name = "THE MAW"
+        end select
+    end function boss_name
+
+    pure integer function boss_hp(sector) result(hp)
+        integer, intent(in) :: sector
+        select case (sector)
+        case (1); hp = 16
+        case (2); hp = 20
+        case default; hp = 26
+        end select
+    end function boss_hp
+
+    pure real(rk) function boss_hold_z(sector) result(z)
+        integer, intent(in) :: sector
+        select case (sector)
+        case (1); z = 15.5_rk
+        case (2); z = 14.8_rk
+        case default; z = 14.0_rk
+        end select
+    end function boss_hold_z
 
     subroutine player_hit(gs, pos)
         type(game_state_t), intent(inout) :: gs
@@ -1003,6 +1238,7 @@ contains
         call render_environment(gs, width, height)
         call render_particles(gs, width, height)
         call render_enemies(gs, width, height)
+        call render_boss_attack(gs, width, height)
 
         select case (gs%state)
         case (state_title)
@@ -1011,6 +1247,7 @@ contains
             call render_cockpit(gs, width, height)
             call render_sector_intro(gs, width, height)
             call render_hud(gs, width, height)
+            call render_boss_hud(gs, width, height)
             if (gs%paused) call draw_centered_text("PAUSED", width / 2, height / 2 - 45, max(5, width / 190), 255, 255, 80, 230)
         case (state_game_over)
             call render_cockpit(gs, width, height)
@@ -1154,6 +1391,7 @@ contains
         integer :: line_count
         real(rk) :: boost
         integer :: alpha
+        integer :: boss_kind
 
         cam = scene_camera(gs)
         line_count = 0
@@ -1161,17 +1399,52 @@ contains
             if (.not. gs%enemies(i)%active) cycle
             pos = enemy_position(gs%enemies(i))
             xf%position = pos
-            xf%rotation = vec3(0.22_rk * sin(gs%enemies(i)%age), &
-                               gs%enemies(i)%age * 0.55_rk + gs%enemies(i)%phase, &
-                               0.26_rk * sin(gs%enemies(i)%age * 2.0_rk))
-            xf%scale = enemy_scale(pos%z)
-            boost = merge(2.25_rk, 1.0_rk, gs%enemies(i)%flash > 0.0_rk)
-            alpha = max(105, min(255, nint(290.0_rk - pos%z * 3.2_rk)))
-            call append_model_lines(gs%enemy_model, xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+            if (gs%enemies(i)%is_boss) then
+                boss_kind = gs%enemies(i)%boss_kind
+                xf%rotation = vec3(0.10_rk * sin(gs%enemies(i)%age * 0.5_rk), &
+                                   gs%enemies(i)%age * 0.18_rk + gs%enemies(i)%phase * 0.12_rk, &
+                                   0.08_rk * sin(gs%enemies(i)%age * 0.7_rk))
+                xf%scale = boss_scale(boss_kind, pos%z)
+                boost = merge(2.6_rk, 1.15_rk, gs%enemies(i)%flash > 0.0_rk)
+                alpha = max(170, min(255, nint(320.0_rk - pos%z * 3.0_rk)))
+                call append_model_lines(gs%boss_models(boss_kind), xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+            else
+                xf%rotation = vec3(0.22_rk * sin(gs%enemies(i)%age), &
+                                   gs%enemies(i)%age * 0.55_rk + gs%enemies(i)%phase, &
+                                   0.26_rk * sin(gs%enemies(i)%age * 2.0_rk))
+                xf%scale = enemy_scale(pos%z)
+                boost = merge(2.25_rk, 1.0_rk, gs%enemies(i)%flash > 0.0_rk)
+                alpha = max(105, min(255, nint(290.0_rk - pos%z * 3.2_rk)))
+                call append_model_lines(gs%enemy_model, xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+            end if
         end do
 
         call draw_screen_lines(gs%lines, line_count)
     end subroutine render_enemies
+
+    subroutine render_boss_attack(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        type(camera3) :: cam
+        type(vec2) :: screen
+        type(vec3) :: pos
+        real(rk) :: depth
+        real(rk) :: scale_px
+        integer :: index
+        integer :: alpha
+
+        if (gs%boss_attack_flash <= 0.0_rk) return
+        index = active_boss_index(gs)
+        if (index <= 0) return
+
+        cam = scene_camera(gs)
+        pos = enemy_position(gs%enemies(index))
+        if (.not. project_point(pos, cam, width, height, screen, depth, scale_px)) return
+        alpha = max(0, min(255, nint(255.0_rk * min(1.0_rk, gs%boss_attack_flash / 0.26_rk))))
+        call draw_line_glow(nint(screen%x), nint(screen%y), width / 2, height - max(42, height / 12), 255, 70, 40, alpha, 2)
+        call draw_line_glow(nint(screen%x), nint(screen%y), width / 2, height - max(42, height / 12) - 20, 255, 220, 80, alpha / 2, 1)
+    end subroutine render_boss_attack
 
     subroutine render_particles(gs, width, height)
         type(game_state_t), intent(in) :: gs
@@ -1282,6 +1555,39 @@ contains
                 max(40, min(255, nint(230.0_rk * min(1.0_rk, gs%message_timer)))))
         end if
     end subroutine render_hud
+
+    subroutine render_boss_hud(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer :: index
+        integer :: unit
+        integer :: bar_w
+        integer :: bar_h
+        integer :: pr
+        integer :: pg
+        integer :: pb
+        integer :: ar
+        integer :: ag
+        integer :: ab
+        real :: health
+
+        index = active_boss_index(gs)
+        if (index <= 0) return
+
+        call sector_palette_primary(gs%enemies(index)%boss_kind, pr, pg, pb)
+        call sector_palette_accent(gs%enemies(index)%boss_kind, ar, ag, ab)
+        unit = max(3, width / 310)
+        bar_w = max(220, width / 3)
+        bar_h = max(8, 3 * unit)
+        health = real(max(0, gs%enemies(index)%hp)) / real(max(1, gs%enemies(index)%hp_max))
+
+        call draw_centered_text(trim(boss_name(gs%enemies(index)%boss_kind)), width / 2, 22, unit, ar, ag, ab, 230)
+        call draw_meter(width / 2 - bar_w / 2, 34 + 8 * unit, bar_w, bar_h, health, pr, pg, pb)
+        if (gs%boss_intro_timer > 0.0_rk) then
+            call draw_centered_text("BOSS INBOUND", width / 2, height / 4, max(5, width / 190), 255, 80, 60, 220)
+        end if
+    end subroutine render_boss_hud
 
     subroutine render_sector_intro(gs, width, height)
         type(game_state_t), intent(in) :: gs
@@ -1435,5 +1741,29 @@ contains
         real(rk), intent(in) :: z
         enemy_scale = 0.64_rk + max(0.0_rk, min(0.24_rk, (24.0_rk - z) * 0.012_rk))
     end function enemy_scale
+
+    pure real(rk) function boss_scale(sector, z) result(scale)
+        integer, intent(in) :: sector
+        real(rk), intent(in) :: z
+        select case (sector)
+        case (1); scale = 1.02_rk
+        case (2); scale = 1.12_rk
+        case default; scale = 1.24_rk
+        end select
+        scale = scale + max(0.0_rk, min(0.16_rk, (22.0_rk - z) * 0.007_rk))
+    end function boss_scale
+
+    pure integer function active_boss_index(gs) result(index)
+        type(game_state_t), intent(in) :: gs
+        integer :: i
+
+        index = 0
+        do i = 1, max_enemies
+            if (gs%enemies(i)%active .and. gs%enemies(i)%is_boss) then
+                index = i
+                return
+            end if
+        end do
+    end function active_boss_index
 
 end module game
