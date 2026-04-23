@@ -1,0 +1,63 @@
+# Vector Strike 77
+
+Modern Fortran + SDL2 vector-arcade space shooter vertical slice. The game uses a CPU-side 3D wireframe pipeline in Fortran, then hands final 2D colored line segments to a small SDL2 C boundary for windowing, input, audio beeps, screenshots, and presentation.
+
+## Dependencies
+
+Ubuntu/WSL2 packages:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential gfortran gcc pkg-config libsdl2-dev
+```
+
+`fpm.toml` is included for project metadata, but the reliable build path is `scripts/build.sh` because it uses `pkg-config` for SDL2.
+
+## Build And Run
+
+```bash
+./scripts/build.sh
+./scripts/run.sh
+```
+
+Demo/capture modes:
+
+```bash
+./scripts/run.sh --demo
+./scripts/run.sh --screenshot
+```
+
+`--screenshot` saves `capture.bmp` after a scripted showcase warmup. In-game, press `F12` to save `capture.bmp`.
+
+## Controls
+
+`WASD` or arrow keys aim the reticle. `Space` or `F` fires. `Left Shift` gives precision aim. `P` pauses. `R` restarts after game over. `Esc` quits.
+
+## Rendering Pipeline
+
+The render path is explicit and CPU-side:
+
+1. Wire models are defined as vertices plus colored edges.
+2. Local transforms scale and rotate object vertices.
+3. World transforms place enemies, gates, debris, and cockpit elements.
+4. Camera/view transform moves world points into camera space.
+5. Perspective projection maps visible 3D points to 2D screen coordinates.
+6. Near-plane and coarse visibility checks reject unsafe lines.
+7. Screen-space colored line records are generated.
+8. SDL2 draws black-background glowing vector lines, HUD text, reticle, and feedback.
+
+## Current Slice
+
+The game includes a title screen with persistent high score, playable crosshair-aim combat, 5 enemy motion archetypes (straight, weave, lateral sweep, dive-bomber, orbiter) unlocked across the first waves, wave pacing, hit detection, score/lives/shield/high HUD, vector explosions, screen shake, simple SDL audio tones, a naturalized demo autopilot, and screenshot capture. Frame pacing is driven by SDL's VSYNC when available and falls back to a 60 Hz sleep otherwise.
+
+## Tests
+
+```bash
+./scripts/test.sh
+```
+
+Tests cover projection safety, transforms, and the model-to-screen-line pipeline.
+
+## Layout
+
+`app/` contains the executable entry point. `src/` contains Fortran game/math/rendering modules plus the small SDL2 wrapper. `test/` contains focused Fortran tests. `docs/` has architecture and control notes. `scripts/` contains build/run/test helpers.

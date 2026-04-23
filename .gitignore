@@ -1,0 +1,8 @@
+build/
+capture.bmp
+highscore.dat
+*.mod
+*.smod
+*.o
+*.a
+*.so

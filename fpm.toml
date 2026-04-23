@@ -1,0 +1,21 @@
+name = "vector_space_shooter"
+version = "0.1.0"
+license = "MIT"
+author = "Vector Strike contributors"
+maintainer = "Vector Strike contributors"
+copyright = "2026"
+
+[build]
+auto-executables = false
+auto-tests = false
+auto-examples = false
+
+[[executable]]
+name = "vector_space_shooter"
+source-dir = "app"
+main = "main.f90"
+
+[[test]]
+name = "test_math_pipeline"
+source-dir = "test"
+main = "test_math_pipeline.f90"
