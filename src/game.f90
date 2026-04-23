@@ -18,6 +18,14 @@ module game
     integer, parameter :: state_play = 1
     integer, parameter :: state_game_over = 2
     integer, parameter :: state_victory = 3
+    integer, parameter :: state_transmission = 4
+
+    integer, parameter :: tx_none = 0
+    integer, parameter :: tx_opening = 1
+    integer, parameter :: tx_sector_two = 2
+    integer, parameter :: tx_sector_three = 3
+    integer, parameter :: tx_victory = 4
+    integer, parameter :: tx_defeat = 5
 
     integer, parameter :: max_stars = 220
     integer, parameter :: max_enemies = 48
@@ -99,6 +107,10 @@ module game
         real(rk) :: boss_attack_flash = 0.0_rk
         logical :: boss_fight = .false.
         integer :: boss_cleared_sector = 0
+        integer :: transmission_id = tx_none
+        integer :: transmission_next_state = state_play
+        integer :: transmission_visible_lines = 0
+        real(rk) :: transmission_timer = 0.0_rk
         logical :: demo_mode = .false.
         logical :: paused = .false.
         character(len=48) :: message = ""
@@ -199,6 +211,12 @@ contains
             left_mouse_down = iand(mouse_buttons, mouse_button_left) /= 0
             start_pressed = return_down .or. space_down .or. left_mouse_down
             fire_pressed = space_down .or. fire_down .or. left_mouse_down
+
+            if (gs%state == state_transmission) then
+                if ((fire_pressed .and. .not. prev_fire) .or. (start_pressed .and. .not. prev_start)) then
+                    call continue_transmission(gs)
+                end if
+            end if
 
             if (gs%state == state_title .and. start_pressed .and. .not. prev_start) then
                 call reset_play(gs, .false.)
@@ -344,6 +362,10 @@ contains
         gs%boss_attack_flash = 0.0_rk
         gs%boss_fight = .false.
         gs%boss_cleared_sector = 0
+        gs%transmission_id = tx_none
+        gs%transmission_next_state = state_play
+        gs%transmission_visible_lines = 0
+        gs%transmission_timer = 0.0_rk
         if (demo_mode) then
             gs%message = "DEMO WAVE ONLINE"
         else
@@ -359,6 +381,7 @@ contains
         do i = 1, 5
             call spawn_enemy(gs, 18.0_rk + real(i, rk) * 4.2_rk)
         end do
+        if (.not. demo_mode) call start_transmission(gs, tx_opening, state_play)
     end subroutine reset_play
 
     subroutine init_stars(gs)
@@ -399,7 +422,7 @@ contains
         gs%danger_timer = max(0.0_rk, gs%danger_timer - dt)
         gs%message_timer = max(0.0_rk, gs%message_timer - dt)
         gs%screen_shake = max(0.0_rk, gs%screen_shake - dt * 1.8_rk)
-        gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
+        if (gs%state == state_play) gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
 
         call update_boss_timers(gs, dt)
@@ -426,8 +449,73 @@ contains
         case (state_victory)
             call update_enemies(gs, dt * 0.25_rk)
             call update_particles(gs, dt)
+        case (state_transmission)
+            call update_transmission(gs, dt)
         end select
     end subroutine update_game
+
+    subroutine start_transmission(gs, transmission_id, next_state)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: transmission_id
+        integer, intent(in) :: next_state
+
+        if (gs%demo_mode) then
+            gs%state = next_state
+            return
+        end if
+
+        gs%state = state_transmission
+        gs%transmission_id = transmission_id
+        gs%transmission_next_state = next_state
+        gs%transmission_visible_lines = 0
+        gs%transmission_timer = 0.18_rk
+        gs%message_timer = 0.0_rk
+    end subroutine start_transmission
+
+    subroutine update_transmission(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        integer :: line_count
+
+        line_count = transmission_line_count(gs%transmission_id)
+        if (gs%transmission_visible_lines >= line_count) return
+
+        gs%transmission_timer = gs%transmission_timer - dt
+        if (gs%transmission_timer <= 0.0_rk) then
+            gs%transmission_visible_lines = min(line_count, gs%transmission_visible_lines + 1)
+            gs%transmission_timer = 0.72_rk
+            call platform_audio_beep(620.0, 0.025, 0.055)
+        end if
+    end subroutine update_transmission
+
+    subroutine continue_transmission(gs)
+        type(game_state_t), intent(inout) :: gs
+        integer :: line_count
+
+        line_count = transmission_line_count(gs%transmission_id)
+        if (gs%transmission_visible_lines < line_count) then
+            gs%transmission_visible_lines = line_count
+            return
+        end if
+
+        gs%state = gs%transmission_next_state
+        gs%transmission_id = tx_none
+        gs%transmission_visible_lines = 0
+        gs%transmission_timer = 0.0_rk
+
+        select case (gs%state)
+        case (state_play)
+            gs%message = sector_name(gs%sector)
+            gs%message_timer = 1.2_rk
+        case (state_game_over)
+            gs%message = "GAME OVER"
+            gs%message_timer = 99.0_rk
+        case (state_victory)
+            gs%message = "GATE IS DARK"
+            gs%message_timer = 99.0_rk
+        end select
+        call platform_audio_beep(440.0, 0.06, 0.10)
+    end subroutine continue_transmission
 
     subroutine update_boss_timers(gs, dt)
         type(game_state_t), intent(inout) :: gs
@@ -673,6 +761,7 @@ contains
         real(rk) :: interval
         real(rk) :: rz
 
+        if (gs%state /= state_play) return
         if (gs%boss_fight .or. gs%boss_intro_timer > 0.0_rk .or. gs%boss_victory_timer > 0.0_rk) return
 
         gs%spawn_timer = gs%spawn_timer - dt
@@ -1038,7 +1127,6 @@ contains
         type(game_state_t), intent(inout) :: gs
 
         if (gs%boss_cleared_sector >= max_sector) then
-            gs%state = state_victory
             gs%message = "GATE IS DARK"
             gs%message_timer = 99.0_rk
             call platform_audio_beep(180.0, 0.18, 0.18)
@@ -1047,6 +1135,11 @@ contains
             if (.not. gs%demo_mode .and. gs%score > gs%high_score) then
                 gs%high_score = gs%score
                 call save_high_score(gs%high_score)
+            end if
+            if (gs%demo_mode) then
+                gs%state = state_victory
+            else
+                call start_transmission(gs, tx_victory, state_victory)
             end if
             return
         end if
@@ -1064,6 +1157,14 @@ contains
         call platform_audio_beep(320.0, 0.10, 0.16)
         call platform_audio_beep(480.0, 0.12, 0.14)
         call platform_audio_beep(640.0, 0.14, 0.12)
+        if (.not. gs%demo_mode) then
+            select case (gs%sector)
+            case (2)
+                call start_transmission(gs, tx_sector_two, state_play)
+            case (3)
+                call start_transmission(gs, tx_sector_three, state_play)
+            end select
+        end if
     end subroutine complete_boss_victory
 
     subroutine update_boss_attack(gs, dt)
@@ -1183,11 +1284,15 @@ contains
         end if
 
         if (gs%lives <= 0) then
-            gs%state = state_game_over
             gs%message = "GAME OVER"
             gs%message_timer = 99.0_rk
             call platform_audio_beep(140.0, 0.18, 0.12)
             call platform_audio_beep(90.0, 0.25, 0.10)
+            if (gs%demo_mode) then
+                gs%state = state_game_over
+            else
+                call start_transmission(gs, tx_defeat, state_game_over)
+            end if
         end if
     end subroutine player_hit
 
@@ -1235,10 +1340,12 @@ contains
         call platform_begin_frame()
         call render_stars(gs, width, height)
         call render_depth_grid(gs, width, height)
-        call render_environment(gs, width, height)
-        call render_particles(gs, width, height)
-        call render_enemies(gs, width, height)
-        call render_boss_attack(gs, width, height)
+        if (gs%state /= state_transmission) then
+            call render_environment(gs, width, height)
+            call render_particles(gs, width, height)
+            call render_enemies(gs, width, height)
+            call render_boss_attack(gs, width, height)
+        end if
 
         select case (gs%state)
         case (state_title)
@@ -1257,6 +1364,8 @@ contains
             call render_cockpit(gs, width, height)
             call render_hud(gs, width, height)
             call render_victory(gs, width, height)
+        case (state_transmission)
+            call render_transmission(gs, width, height)
         end select
     end subroutine render_game
 
@@ -1661,6 +1770,48 @@ contains
         call draw_centered_text("MOUSE OR WASD AIM   CLICK OR SPACE FIRE   F12 CAPTURE", width / 2, height - height / 8, small_unit, 0, 190, 255, 185)
     end subroutine render_title
 
+    subroutine render_transmission(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        character(len=48) :: line
+        integer :: panel_w
+        integer :: panel_h
+        integer :: left
+        integer :: top
+        integer :: unit
+        integer :: line_count
+        integer :: i
+        integer :: pulse
+        integer :: y
+
+        panel_w = min(width - 80, max(width * 4 / 5, 900))
+        panel_h = min(height - 100, max(height / 2, 360))
+        left = width / 2 - panel_w / 2
+        top = height / 2 - panel_h / 2
+        unit = max(2, min(max(3, width / 340), max(2, (panel_w - 60) / (48 * 6))))
+        line_count = transmission_line_count(gs%transmission_id)
+
+        call draw_box(left, top, left + panel_w, top + panel_h, 0, 210, 255, 130)
+        call draw_line_glow(left + 24, top + 44, left + panel_w - 24, top + 44, 0, 210, 255, 90, 1)
+        do i = 0, 4
+            y = top + 78 + i * max(22, 9 * unit)
+            call draw_line_glow(left + 28, y, left + panel_w - 28, y, 0, 80, 120, 38, 1)
+        end do
+
+        call draw_centered_text("PHOSPHOR COMMAND", width / 2, top + 16, unit, 0, 230, 255, 220)
+        do i = 1, min(gs%transmission_visible_lines, line_count)
+            line = transmission_line(gs%transmission_id, i)
+            call draw_text(trim(line), left + 34, top + 76 + (i - 1) * 10 * unit, unit, 255, 255, 210, 225)
+        end do
+
+        if (gs%transmission_visible_lines >= line_count .and. line_count > 0) then
+            pulse = nint(170.0_rk + 55.0_rk * sin(gs%time * 4.4_rk))
+            call draw_centered_text("PRESS SPACE / FIRE TO CONTINUE", width / 2, top + panel_h - 44, &
+                max(2, unit - 1), 255, 220, 80, pulse)
+        end if
+    end subroutine render_transmission
+
     subroutine render_game_over(gs, width, height)
         type(game_state_t), intent(in) :: gs
         integer, intent(in) :: width
@@ -1765,5 +1916,61 @@ contains
             end if
         end do
     end function active_boss_index
+
+    pure integer function transmission_line_count(transmission_id) result(line_count)
+        integer, intent(in) :: transmission_id
+        select case (transmission_id)
+        case (tx_opening, tx_sector_two, tx_sector_three, tx_victory)
+            line_count = 4
+        case (tx_defeat)
+            line_count = 3
+        case default
+            line_count = 0
+        end select
+    end function transmission_line_count
+
+    pure function transmission_line(transmission_id, line_index) result(line)
+        integer, intent(in) :: transmission_id
+        integer, intent(in) :: line_index
+        character(len=48) :: line
+
+        line = ""
+        select case (transmission_id)
+        case (tx_opening)
+            select case (line_index)
+            case (1); line = ">> PHOSPHOR COMMAND TO PILOT 77"
+            case (2); line = ">> COIL SCOUTS CROSSED THE PICKET LINE"
+            case (3); line = ">> HOLD THE GATE. SOL CANNOT KNOW THEY FOUND US"
+            case (4); line = ">> GOOD HUNTING, PHOSPHOR-LEAD"
+            end select
+        case (tx_sector_two)
+            select case (line_index)
+            case (1); line = ">> PICKET HELD. HARROWER DOWN"
+            case (2); line = ">> ASTEROID LANE IS COIL TERRITORY NOW"
+            case (3); line = ">> CUT THROUGH. DO NOT LINGER"
+            case (4); line = ">> THE ROCKS ARE ALIVE"
+            end select
+        case (tx_sector_three)
+            select case (line_index)
+            case (1); line = ">> LAST TRANSMISSION, PHOSPHOR-LEAD"
+            case (2); line = ">> THE MAW IS AWAKE AT THE GATE"
+            case (3); line = ">> CLOSE IT OR THE COIL SEES HOME"
+            case (4); line = ">> SOL IS WITH YOU"
+            end select
+        case (tx_victory)
+            select case (line_index)
+            case (1); line = ">> GATE IS DARK. COIL IS SILENT"
+            case (2); line = ">> SOL CONFIRMS EVACUATION COMPLETE"
+            case (3); line = ">> PHOSPHOR-LEAD, COME HOME"
+            case (4); line = ">> WE LOG THIS ONE IN LEGEND"
+            end select
+        case (tx_defeat)
+            select case (line_index)
+            case (1); line = ">> PHOSPHOR SIGNAL LOST"
+            case (2); line = ">> COIL ADVANCING ON SOL"
+            case (3); line = ">> STAND BY FOR NEXT PILOT"
+            end select
+        end select
+    end function transmission_line
 
 end module game
