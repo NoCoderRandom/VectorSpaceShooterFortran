@@ -10,7 +10,11 @@ typedef struct {
     float freq;
     float phase;
     float remaining;
+    float start_seconds;
     float volume;
+    float decay;
+    uint32_t noise_state;
+    int kind;
 } VsVoice;
 
 static SDL_Window *g_window = NULL;
@@ -42,10 +46,23 @@ static void vs_audio_callback(void *userdata, Uint8 *stream, int len) {
             }
 
             float env = voice->remaining < 0.035f ? voice->remaining / 0.035f : 1.0f;
-            mixed += sinf(voice->phase) * voice->volume * env;
-            voice->phase += two_pi * voice->freq / (float)g_sample_rate;
-            if (voice->phase > two_pi) {
-                voice->phase -= two_pi;
+            if (voice->decay > 0.0f && voice->start_seconds > 0.0f) {
+                float life = voice->remaining / voice->start_seconds;
+                if (life < 0.0f) life = 0.0f;
+                if (life > 1.0f) life = 1.0f;
+                env *= powf(life, voice->decay);
+            }
+
+            if (voice->kind == 1) {
+                voice->noise_state = voice->noise_state * 1664525u + 1013904223u;
+                float noise = (float)((voice->noise_state >> 8) & 0xffffu) / 32768.0f - 1.0f;
+                mixed += noise * voice->volume * env;
+            } else {
+                mixed += sinf(voice->phase) * voice->volume * env;
+                voice->phase += two_pi * voice->freq / (float)g_sample_rate;
+                if (voice->phase > two_pi) {
+                    voice->phase -= two_pi;
+                }
             }
             voice->remaining -= 1.0f / (float)g_sample_rate;
         }
@@ -242,7 +259,37 @@ void vs_audio_beep(float freq, float seconds, float volume) {
     g_voices[slot].freq = freq;
     g_voices[slot].phase = 0.0f;
     g_voices[slot].remaining = seconds;
+    g_voices[slot].start_seconds = seconds;
     g_voices[slot].volume = volume;
+    g_voices[slot].decay = 0.0f;
+    g_voices[slot].kind = 0;
+    SDL_UnlockAudioDevice(g_audio);
+}
+
+void vs_audio_noise(float freq, float seconds, float volume, float decay) {
+    if (!g_audio_ok || g_audio == 0 || seconds <= 0.0f || volume <= 0.0f) {
+        return;
+    }
+
+    if (volume > 1.0f) volume = 1.0f;
+    if (decay < 0.0f) decay = 0.0f;
+
+    SDL_LockAudioDevice(g_audio);
+    int slot = 0;
+    for (int i = 0; i < VS_AUDIO_VOICES; ++i) {
+        if (g_voices[i].remaining <= 0.0f) {
+            slot = i;
+            break;
+        }
+    }
+    g_voices[slot].freq = freq;
+    g_voices[slot].phase = 0.0f;
+    g_voices[slot].remaining = seconds;
+    g_voices[slot].start_seconds = seconds;
+    g_voices[slot].volume = volume;
+    g_voices[slot].decay = decay;
+    g_voices[slot].kind = 1;
+    g_voices[slot].noise_state = (uint32_t)(SDL_GetTicks() * 1664525u + (uint32_t)slot * 1013904223u + 17u);
     SDL_UnlockAudioDevice(g_audio);
 }
 

@@ -3,7 +3,7 @@ module game
     use vector_math, only: rk, vec2, vec3, transform3, camera3, make_vec3, add3, scale3, project_point, clamp, pi
     use platform, only: platform_init, platform_shutdown, platform_pump_events, platform_key_down, &
         platform_ticks, platform_delay, platform_get_draw_size, platform_begin_frame, platform_present, &
-        platform_audio_beep, platform_save_screenshot, platform_vsync_active, platform_mouse_state, &
+        platform_audio_beep, platform_audio_noise, platform_save_screenshot, platform_vsync_active, platform_mouse_state, &
         mouse_button_left, mouse_button_right, &
         key_a, key_d, key_f, key_p, key_r, key_s, key_w, &
         key_return, key_escape, key_space, key_f12, key_right, key_left, key_down, key_up, key_lshift
@@ -102,6 +102,9 @@ module game
         real(rk) :: reticle_y = 0.0_rk
         real(rk) :: fire_cooldown = 0.0_rk
         real(rk) :: shot_flash = 0.0_rk
+        real(rk) :: shot_chain_timer = 0.0_rk
+        integer :: shot_serial = 0
+        logical :: precision_aim = .false.
         real(rk) :: laser_x = 0.0_rk
         real(rk) :: laser_y = 0.0_rk
         real(rk) :: laser_target_x = 0.0_rk
@@ -109,6 +112,8 @@ module game
         logical :: laser_target_locked = .false.
         real(rk) :: spawn_timer = 0.0_rk
         real(rk) :: danger_timer = 0.0_rk
+        real(rk) :: ambient_timer = 0.0_rk
+        real(rk) :: coil_chatter_timer = 0.0_rk
         real(rk) :: message_timer = 0.0_rk
         real(rk) :: screen_shake = 0.0_rk
         real(rk) :: time = 0.0_rk
@@ -372,11 +377,16 @@ contains
         gs%reticle_y = 0.0_rk
         gs%fire_cooldown = 0.15_rk
         gs%shot_flash = 0.0_rk
+        gs%shot_chain_timer = 0.0_rk
+        gs%shot_serial = 0
+        gs%precision_aim = .false.
         gs%laser_target_x = 0.0_rk
         gs%laser_target_y = 0.0_rk
         gs%laser_target_locked = .false.
         gs%spawn_timer = 0.05_rk
         gs%danger_timer = 0.0_rk
+        gs%ambient_timer = 0.0_rk
+        gs%coil_chatter_timer = 0.8_rk
         gs%message_timer = 2.0_rk
         gs%sector_intro_timer = 2.6_rk
         gs%demo_palette_timer = 0.0_rk
@@ -444,6 +454,7 @@ contains
         gs%time = gs%time + dt
         gs%fire_cooldown = max(0.0_rk, gs%fire_cooldown - dt)
         gs%shot_flash = max(0.0_rk, gs%shot_flash - dt)
+        gs%shot_chain_timer = max(0.0_rk, gs%shot_chain_timer - dt)
         if (gs%shot_flash <= 0.0_rk) gs%laser_target_locked = .false.
         gs%danger_timer = max(0.0_rk, gs%danger_timer - dt)
         gs%message_timer = max(0.0_rk, gs%message_timer - dt)
@@ -464,6 +475,9 @@ contains
             call update_enemies(gs, dt)
             call update_particles(gs, dt)
             call update_spawning(gs, dt)
+            call update_ambient_audio(gs, dt)
+            call update_proximity_audio(gs)
+            call update_coil_chatter(gs, dt)
             call update_boss_attack(gs, dt)
             call update_demo_autopilot(gs, dt, width, height)
             if (gs%state == state_play .and. &
@@ -511,7 +525,8 @@ contains
         if (gs%transmission_timer <= 0.0_rk) then
             gs%transmission_visible_lines = min(line_count, gs%transmission_visible_lines + 1)
             gs%transmission_timer = 0.72_rk
-            call platform_audio_beep(620.0, 0.025, 0.055)
+            call platform_audio_beep(880.0, 0.014, 0.040)
+            call platform_audio_noise(1800.0, 0.018, 0.030, 3.0)
         end if
     end subroutine update_transmission
 
@@ -635,6 +650,7 @@ contains
         if (platform_key_down(key_down)) move_down = .true.
         right_mouse = iand(mouse_buttons, mouse_button_right) /= 0
         precision = platform_key_down(key_lshift) .or. right_mouse
+        gs%precision_aim = precision
 
         if (move_right) axis_x = axis_x + 1.0_rk
         if (move_left) axis_x = axis_x - 1.0_rk
@@ -808,10 +824,6 @@ contains
                 gs%enemies(i)%active = .false.
                 if (gs%state == state_play) call player_hit(gs, pos)
             end if
-            if (pos%z < 8.0_rk .and. gs%danger_timer <= 0.0_rk .and. gs%state == state_play) then
-                gs%danger_timer = 0.55_rk
-                call platform_audio_beep(120.0, 0.08, 0.07)
-            end if
         end do
     end subroutine update_enemies
 
@@ -850,6 +862,114 @@ contains
         gs%spawn_timer = interval + rz * 0.45_rk
         call spawn_enemy(gs, 24.0_rk + rz * 13.0_rk)
     end subroutine update_spawning
+
+    subroutine update_ambient_audio(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk) :: freq
+        real(rk) :: volume
+
+        if (gs%state /= state_play) return
+
+        gs%ambient_timer = gs%ambient_timer - dt
+        if (gs%ambient_timer > 0.0_rk) return
+
+        gs%ambient_timer = 0.28_rk
+        select case (gs%sector)
+        case (1)
+            freq = 110.0_rk
+            volume = 0.018_rk
+        case (2)
+            freq = 82.0_rk
+            volume = 0.014_rk + 0.008_rk * (0.5_rk + 0.5_rk * sin(gs%time * 2.0_rk * pi * 4.0_rk))
+        case default
+            freq = 92.0_rk
+            volume = 0.020_rk
+        end select
+        if (gs%boss_fight) volume = volume + 0.008_rk
+        call platform_audio_beep(real(freq), 0.34, real(volume))
+    end subroutine update_ambient_audio
+
+    subroutine update_proximity_audio(gs)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3) :: pos
+        real(rk) :: nearest_z
+        real(rk) :: pitch
+        real(rk) :: interval
+        integer :: i
+
+        if (gs%state /= state_play) return
+
+        nearest_z = huge(1.0_rk)
+        do i = 1, max_enemies
+            if (.not. gs%enemies(i)%active .or. gs%enemies(i)%is_boss) cycle
+            pos = enemy_position(gs%enemies(i))
+            if (pos%z > 1.25_rk .and. pos%z < nearest_z) nearest_z = pos%z
+        end do
+
+        if (nearest_z > 10.0_rk) then
+            gs%danger_timer = 0.0_rk
+            return
+        end if
+
+        if (gs%danger_timer > 0.0_rk) return
+
+        pitch = 170.0_rk + (10.0_rk - nearest_z) * 58.0_rk
+        interval = merge(0.18_rk, 0.38_rk, nearest_z < 5.0_rk)
+        gs%danger_timer = interval
+        call platform_audio_beep(real(pitch), 0.045, 0.075)
+        if (nearest_z < 5.0_rk) call platform_audio_beep(real(pitch * 1.45_rk), 0.025, 0.050)
+    end subroutine update_proximity_audio
+
+    subroutine update_coil_chatter(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk) :: rx
+        real(rk) :: ry
+        real(rk) :: rz
+
+        if (gs%state /= state_play .or. gs%boss_intro_timer > 0.0_rk) return
+
+        gs%coil_chatter_timer = gs%coil_chatter_timer - dt
+        if (gs%coil_chatter_timer > 0.0_rk) return
+
+        call random_number(rx)
+        call random_number(ry)
+        call random_number(rz)
+        gs%coil_chatter_timer = 1.3_rk + rx * 2.7_rk
+        call platform_audio_beep(real(600.0_rk + ry * 300.0_rk), 0.040, real(0.030_rk + rz * 0.020_rk))
+    end subroutine update_coil_chatter
+
+    subroutine play_damage_audio()
+        call platform_audio_beep(320.0, 0.045, 0.10)
+        call platform_audio_beep(620.0, 0.030, 0.055)
+    end subroutine play_damage_audio
+
+    subroutine play_kill_audio()
+        call platform_audio_beep(74.0, 0.18, 0.19)
+        call platform_audio_beep(300.0, 0.08, 0.15)
+        call platform_audio_noise(1350.0, 0.12, 0.045, 1.8)
+    end subroutine play_kill_audio
+
+    subroutine play_boss_kill_audio()
+        call platform_audio_beep(40.0, 0.48, 0.22)
+        call platform_audio_beep(90.0, 0.28, 0.20)
+        call platform_audio_noise(1250.0, 0.28, 0.070, 1.4)
+        call platform_audio_beep(220.0, 0.18, 0.14)
+        call platform_audio_beep(330.0, 0.20, 0.13)
+        call platform_audio_beep(440.0, 0.24, 0.12)
+    end subroutine play_boss_kill_audio
+
+    subroutine play_player_hit_audio()
+        call platform_audio_beep(70.0, 0.18, 0.20)
+        call platform_audio_noise(900.0, 0.11, 0.075, 2.2)
+    end subroutine play_player_hit_audio
+
+    subroutine play_game_over_audio()
+        call platform_audio_beep(140.0, 0.18, 0.12)
+        call platform_audio_beep(90.0, 0.25, 0.10)
+        call platform_audio_beep(45.0, 0.36, 0.16)
+    end subroutine play_game_over_audio
 
     subroutine spawn_enemy(gs, z_override)
         type(game_state_t), intent(inout) :: gs
@@ -993,6 +1113,8 @@ contains
         real(rk) :: radius_px
         integer :: best
         logical :: in_damage_range
+        real(rk) :: shot_pitch
+        real(rk) :: detune
 
         block
             real(rk) :: jitter
@@ -1007,8 +1129,13 @@ contains
         gs%laser_x = gs%reticle_x
         gs%laser_y = gs%reticle_y
         gs%laser_target_locked = .false.
-        call platform_audio_beep(780.0, 0.045, 0.16)
-        call platform_audio_beep(1140.0, 0.025, 0.08)
+        if (gs%shot_chain_timer <= 0.0_rk) gs%shot_serial = 0
+        gs%shot_serial = gs%shot_serial + 1
+        detune = real(mod(gs%shot_serial, 7) - 3, rk) * 7.5_rk
+        shot_pitch = merge(930.0_rk, 780.0_rk, gs%precision_aim) + detune
+        gs%shot_chain_timer = 0.28_rk
+        call platform_audio_beep(real(shot_pitch), 0.045, merge(0.13, 0.16, gs%precision_aim))
+        call platform_audio_beep(real(shot_pitch * 1.46_rk), 0.024, merge(0.055, 0.075, gs%precision_aim))
 
         call find_lock_target(gs, width, height, best, screen, radius_px, in_damage_range)
         if (best > 0) then
@@ -1050,8 +1177,7 @@ contains
             gs%screen_shake = max(gs%screen_shake, 0.22_rk)
             gs%message = "TARGET BROKEN"
             gs%message_timer = 0.55_rk
-            call platform_audio_beep(180.0, 0.09, 0.15)
-            call platform_audio_beep(90.0, 0.13, 0.12)
+            call play_kill_audio()
             if (gs%kills_sector_wave >= sector_wave_quota(gs%sector_wave)) then
                 call advance_wave(gs)
             end if
@@ -1059,12 +1185,11 @@ contains
             if (gs%enemies(index)%is_boss) then
                 gs%score = gs%score + 35 * gs%sector
                 call spawn_explosion(gs, pos, 18, 255, 255, 180)
-                call platform_audio_beep(300.0, 0.045, 0.12)
-                call platform_audio_beep(150.0, 0.055, 0.08)
+                call play_damage_audio()
             else
                 gs%score = gs%score + 25
                 call spawn_explosion(gs, pos, 12, 255, 255, 180)
-                call platform_audio_beep(360.0, 0.04, 0.12)
+                call play_damage_audio()
             end if
         end if
     end subroutine damage_enemy
@@ -1180,10 +1305,7 @@ contains
         gs%boss_attack_flash = 0.0_rk
         gs%boss_victory_timer = 1.45_rk
         gs%boss_cleared_sector = gs%enemies(index)%boss_kind
-        call platform_audio_beep(90.0, 0.28, 0.22)
-        call platform_audio_beep(180.0, 0.22, 0.18)
-        call platform_audio_beep(360.0, 0.18, 0.16)
-        call platform_audio_beep(720.0, 0.14, 0.11)
+        call play_boss_kill_audio()
     end subroutine defeat_boss
 
     subroutine complete_boss_victory(gs)
@@ -1414,7 +1536,7 @@ contains
         gs%screen_shake = max(gs%screen_shake, 0.55_rk)
         gs%message = "SHIELD IMPACT"
         gs%message_timer = 0.95_rk
-        call platform_audio_beep(70.0, 0.18, 0.20)
+        call play_player_hit_audio()
 
         if (gs%shield <= 0.0_rk) then
             gs%lives = gs%lives - 1
@@ -1427,8 +1549,7 @@ contains
         if (gs%lives <= 0) then
             gs%message = "GAME OVER"
             gs%message_timer = 99.0_rk
-            call platform_audio_beep(140.0, 0.18, 0.12)
-            call platform_audio_beep(90.0, 0.25, 0.10)
+            call play_game_over_audio()
             if (gs%demo_mode) then
                 gs%state = state_game_over
             else

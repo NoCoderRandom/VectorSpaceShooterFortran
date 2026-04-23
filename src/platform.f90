@@ -32,6 +32,7 @@ module platform
     public :: platform_present
     public :: platform_draw_line
     public :: platform_audio_beep
+    public :: platform_audio_noise
     public :: platform_save_screenshot
     public :: platform_vsync_active
     public :: platform_mouse_state
@@ -102,6 +103,14 @@ module platform
             real(c_float), value :: freq
             real(c_float), value :: seconds
             real(c_float), value :: volume
+        end subroutine
+
+        subroutine c_vs_audio_noise(freq, seconds, volume, decay) bind(c, name="vs_audio_noise")
+            import :: c_float
+            real(c_float), value :: freq
+            real(c_float), value :: seconds
+            real(c_float), value :: volume
+            real(c_float), value :: decay
         end subroutine
 
         function c_vs_save_screenshot(path) bind(c, name="vs_save_screenshot") result(ok)
@@ -202,6 +211,15 @@ contains
 
         call c_vs_audio_beep(real(freq, c_float), real(seconds, c_float), real(volume, c_float))
     end subroutine platform_audio_beep
+
+    subroutine platform_audio_noise(freq, seconds, volume, decay)
+        real, intent(in) :: freq
+        real, intent(in) :: seconds
+        real, intent(in) :: volume
+        real, intent(in) :: decay
+
+        call c_vs_audio_noise(real(freq, c_float), real(seconds, c_float), real(volume, c_float), real(decay, c_float))
+    end subroutine platform_audio_noise
 
     logical function platform_save_screenshot(path)
         character(len=*), intent(in) :: path
