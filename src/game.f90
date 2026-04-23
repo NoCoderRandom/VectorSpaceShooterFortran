@@ -513,6 +513,17 @@ contains
 
         if (.not. gs%demo_mode) return
 
+        gs%demo_palette_timer = gs%demo_palette_timer + dt
+        if (gs%demo_palette_timer >= 9.0_rk) then
+            gs%demo_palette_timer = modulo(gs%demo_palette_timer, 9.0_rk)
+            gs%sector = 1 + mod(gs%sector, max_sector)
+            gs%sector_wave = 1
+            gs%kills_sector_wave = 0
+            gs%sector_intro_timer = 2.8_rk
+            gs%message = sector_name(gs%sector)
+            gs%message_timer = 1.6_rk
+        end if
+
         call find_demo_target(gs, width, height, index, tx, ty)
         jitter_x = 0.035_rk * sin(gs%time * 4.3_rk + 1.1_rk)
         jitter_y = 0.030_rk * sin(gs%time * 3.1_rk + 2.7_rk)
@@ -998,12 +1009,17 @@ contains
             call render_title(gs, width, height)
         case (state_play)
             call render_cockpit(gs, width, height)
+            call render_sector_intro(gs, width, height)
             call render_hud(gs, width, height)
             if (gs%paused) call draw_centered_text("PAUSED", width / 2, height / 2 - 45, max(5, width / 190), 255, 255, 80, 230)
         case (state_game_over)
             call render_cockpit(gs, width, height)
             call render_hud(gs, width, height)
             call render_game_over(gs, width, height)
+        case (state_victory)
+            call render_cockpit(gs, width, height)
+            call render_hud(gs, width, height)
+            call render_victory(gs, width, height)
         end select
     end subroutine render_game
 
@@ -1020,10 +1036,17 @@ contains
         real(rk) :: d2
         integer :: i
         integer :: shade
+        integer :: pr
+        integer :: pg
+        integer :: pb
+        integer :: sr
+        integer :: sg
+        integer :: sb
         logical :: ok1
         logical :: ok2
 
         cam = scene_camera(gs)
+        call sector_palette_primary(gs%sector, pr, pg, pb)
         do i = 1, max_stars
             p1 = vec3(gs%stars(i)%x, gs%stars(i)%y, gs%stars(i)%z)
             p2 = vec3(gs%stars(i)%x * 1.002_rk, gs%stars(i)%y * 1.002_rk, gs%stars(i)%z + 0.55_rk)
@@ -1031,7 +1054,10 @@ contains
             ok2 = project_point(p2, cam, width, height, s2, d2)
             if (ok1 .and. ok2) then
                 shade = max(30, min(255, int(real(gs%stars(i)%shade, rk) * (1.0_rk - min(0.82_rk, d1 / 92.0_rk)))))
-                call draw_line_glow(nint(s1%x), nint(s1%y), nint(s2%x), nint(s2%y), shade / 2, shade, shade, 130, 1)
+                sr = max(shade / 3, pr * shade / 255)
+                sg = max(shade / 3, pg * shade / 255)
+                sb = max(shade / 3, pb * shade / 255)
+                call draw_line_glow(nint(s1%x), nint(s1%y), nint(s2%x), nint(s2%y), sr, sg, sb, 130, 1)
             end if
         end do
     end subroutine render_stars
@@ -1050,11 +1076,15 @@ contains
         real(rk) :: z
         real(rk) :: phase
         integer :: i
+        integer :: dr
+        integer :: dg
+        integer :: db
         logical :: ok1
         logical :: ok2
 
         cam = scene_camera(gs)
         phase = modulo(gs%time * 5.2_rk, 4.0_rk)
+        call sector_palette_dim(gs%sector, dr, dg, db)
 
         do i = 0, 18
             z = 4.0_rk + real(i, rk) * 4.0_rk - phase
@@ -1064,7 +1094,7 @@ contains
             ok1 = project_point(p1, cam, width, height, a, d1)
             ok2 = project_point(p2, cam, width, height, b, d2)
             if (ok1 .and. ok2) then
-                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), 0, 80, 120, 58, 1)
+                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), dr, dg, db, 58, 1)
             end if
         end do
 
@@ -1074,7 +1104,8 @@ contains
             ok1 = project_point(p1, cam, width, height, a, d1)
             ok2 = project_point(p2, cam, width, height, b, d2)
             if (ok1 .and. ok2) then
-                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), 0, 60, 105, 52, 1)
+                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), &
+                    max(0, dr * 3 / 4), max(0, dg * 3 / 4), max(0, db * 3 / 4), 52, 1)
             end if
         end do
     end subroutine render_depth_grid
@@ -1178,8 +1209,20 @@ contains
         integer :: bx
         integer :: by
         integer :: span
+        integer :: pr
+        integer :: pg
+        integer :: pb
+        integer :: ar
+        integer :: ag
+        integer :: ab
+        integer :: dr
+        integer :: dg
+        integer :: db
         real(rk) :: flash
 
+        call sector_palette_primary(gs%sector, pr, pg, pb)
+        call sector_palette_accent(gs%sector, ar, ag, ab)
+        call sector_palette_dim(gs%sector, dr, dg, db)
         cx = nint(0.5_rk * real(width, rk) + gs%reticle_x * 0.42_rk * real(width, rk))
         cy = nint(0.5_rk * real(height, rk) - gs%reticle_y * 0.38_rk * real(height, rk))
         flash = real(gs%shot_flash / 0.11_rk)
@@ -1188,15 +1231,15 @@ contains
         bx = width / 2
         by = height - max(42, height / 12)
         span = max(160, width / 5)
-        call draw_line_glow(width / 2 - span, height - 24, width / 2 - span / 3, by, 0, 150, 255, 190, 2)
-        call draw_line_glow(width / 2 + span, height - 24, width / 2 + span / 3, by, 0, 150, 255, 190, 2)
-        call draw_line_glow(width / 2 - span / 3, by, width / 2 + span / 3, by, 0, 220, 255, 160, 1)
-        call draw_line_glow(width / 2 - span, height - 24, width / 2 + span, height - 24, 0, 80, 140, 120, 1)
+        call draw_line_glow(width / 2 - span, height - 24, width / 2 - span / 3, by, pr, pg, pb, 190, 2)
+        call draw_line_glow(width / 2 + span, height - 24, width / 2 + span / 3, by, pr, pg, pb, 190, 2)
+        call draw_line_glow(width / 2 - span / 3, by, width / 2 + span / 3, by, ar, ag, ab, 160, 1)
+        call draw_line_glow(width / 2 - span, height - 24, width / 2 + span, height - 24, dr, dg, db, 120, 1)
 
         if (gs%shot_flash > 0.0_rk) then
-            call draw_line_glow(width / 2 - span / 4, by, cx, cy, 255, 250, 120, nint(230.0_rk * flash), 2)
-            call draw_line_glow(width / 2 + span / 4, by, cx, cy, 255, 250, 120, nint(230.0_rk * flash), 2)
-            call draw_line_glow(bx, by - 10, cx, cy, 255, 80, 40, nint(150.0_rk * flash), 1)
+            call draw_line_glow(width / 2 - span / 4, by, cx, cy, ar, ag, ab, nint(230.0_rk * flash), 2)
+            call draw_line_glow(width / 2 + span / 4, by, cx, cy, ar, ag, ab, nint(230.0_rk * flash), 2)
+            call draw_line_glow(bx, by - 10, cx, cy, pr, pg, pb, nint(150.0_rk * flash), 1)
         end if
     end subroutine render_cockpit
 
@@ -1208,26 +1251,69 @@ contains
         character(len=32) :: wave_text
         character(len=32) :: lives_text
         character(len=32) :: high_text
+        character(len=32) :: sector_text
         integer :: unit
+        integer :: pr
+        integer :: pg
+        integer :: pb
+        integer :: ar
+        integer :: ag
+        integer :: ab
 
         unit = max(3, width / 285)
+        call sector_palette_primary(gs%sector, pr, pg, pb)
+        call sector_palette_accent(gs%sector, ar, ag, ab)
         write(score_text, '("SCORE ", I7.7)') gs%score
         write(wave_text, '("WAVE ", I2)') gs%wave
-        write(lives_text, '("LIVES ", I1)') max(0, gs%lives)
+        write(lives_text, '("HULL ", I1)') max(0, gs%lives)
         write(high_text, '("HIGH ", I7.7)') gs%high_score
+        write(sector_text, '("S", I1, " W", I1, "/", I1)') gs%sector, gs%sector_wave, waves_per_sector
 
-        call draw_text(trim(score_text), 24, 22, unit, 0, 255, 210, 225)
+        call draw_text(trim(score_text), 24, 22, unit, pr, pg, pb, 225)
         call draw_text(trim(high_text), 24, 58 + 7 * unit + 22 + 7 * unit, unit, 255, 210, 90, 180)
         call draw_text(trim(wave_text), width - 26 - 12 * 6 * unit, 22, unit, 255, 210, 60, 220)
+        call draw_text(trim(sector_text), width - 26 - 9 * 6 * unit, 58 + 7 * unit, unit, ar, ag, ab, 210)
         call draw_text(trim(lives_text), 24, 58 + 7 * unit, unit, 255, 120, 80, 220)
-        call draw_text("SHIELD", width - 26 - 17 * 6 * unit, 58 + 7 * unit, unit, 0, 180, 255, 210)
-        call draw_meter(width - 26 - 80 * unit / 2, 62 + 15 * unit, 36 * unit, max(8, 3 * unit), real(gs%shield), 0, 220, 255)
+        call draw_text("SHIELD", width - 26 - 17 * 6 * unit, 58 + 7 * unit, unit, pr, pg, pb, 210)
+        call draw_meter(width - 26 - 80 * unit / 2, 62 + 15 * unit, 36 * unit, max(8, 3 * unit), real(gs%shield), pr, pg, pb)
 
         if (gs%message_timer > 0.0_rk) then
             call draw_centered_text(trim(gs%message), width / 2, height / 6, max(4, width / 230), 255, 255, 120, &
                 max(40, min(255, nint(230.0_rk * min(1.0_rk, gs%message_timer)))))
         end if
     end subroutine render_hud
+
+    subroutine render_sector_intro(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        real(rk), parameter :: intro_duration = 2.8_rk
+        integer :: unit
+        integer :: alpha
+        integer :: pr
+        integer :: pg
+        integer :: pb
+        integer :: ar
+        integer :: ag
+        integer :: ab
+        integer :: y
+        real(rk) :: phase
+        real(rk) :: fade
+
+        if (gs%sector_intro_timer <= 0.0_rk) return
+
+        call sector_palette_primary(gs%sector, pr, pg, pb)
+        call sector_palette_accent(gs%sector, ar, ag, ab)
+        phase = max(0.0_rk, min(1.0_rk, (intro_duration - gs%sector_intro_timer) / intro_duration))
+        fade = sin(pi * phase)
+        alpha = max(0, min(255, nint(245.0_rk * fade)))
+        if (alpha <= 8) return
+
+        unit = max(5, width / 185)
+        y = height / 3
+        call draw_centered_text(trim(sector_name(gs%sector)), width / 2, y, unit, pr, pg, pb, alpha)
+        call draw_line_glow(width / 2 - width / 5, y + 10 * unit, width / 2 + width / 5, y + 10 * unit, ar, ag, ab, alpha / 2, 1)
+    end subroutine render_sector_intro
 
     subroutine render_title(gs, width, height)
         type(game_state_t), intent(inout) :: gs
@@ -1255,11 +1341,13 @@ contains
         call draw_centered_text("VECTOR STRIKE", width / 2, height / 5, title_unit, 0, 255, 235, 245)
         call draw_centered_text("77", width / 2, height / 5 + 9 * title_unit, title_unit, 255, 185, 40, 235)
         call draw_centered_text("MODERN FORTRAN / SDL2 VECTOR ARCADE", width / 2, height / 2 + height / 8, small_unit, 255, 255, 255, 190)
+        call draw_centered_text("PHOSPHOR WING / SECTOR CAMPAIGN", width / 2, height / 2 + height / 8 + 9 * small_unit, &
+            small_unit, 0, 220, 255, 190)
         if (gs%high_score > 0) then
             block
                 character(len=32) :: hs_text
                 write(hs_text, '("HIGH ", I7.7)') gs%high_score
-                call draw_centered_text(trim(hs_text), width / 2, height / 2 + height / 8 + 10 * small_unit, &
+                call draw_centered_text(trim(hs_text), width / 2, height / 2 + height / 8 + 19 * small_unit, &
                     small_unit, 255, 210, 90, 200)
             end block
         end if
@@ -1293,6 +1381,41 @@ contains
         end if
         call draw_centered_text("PRESS R OR ENTER", width / 2, height / 2 + small * 16, small, 0, 230, 255, 220)
     end subroutine render_game_over
+
+    subroutine render_victory(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        character(len=36) :: score_text
+        character(len=36) :: high_text
+        integer :: big
+        integer :: small
+        integer :: y0
+        integer :: pr
+        integer :: pg
+        integer :: pb
+        integer :: ar
+        integer :: ag
+        integer :: ab
+
+        call sector_palette_primary(gs%sector, pr, pg, pb)
+        call sector_palette_accent(gs%sector, ar, ag, ab)
+        big = max(6, width / 145)
+        small = max(2, min(max(3, width / 320), max(2, (width - 80) / (36 * 6))))
+        y0 = height / 2 - height / 5
+        write(score_text, '("FINAL SCORE ", I7.7)') gs%score
+        write(high_text, '("HIGH SCORE  ", I7.7)') gs%high_score
+
+        call draw_box(width / 2 - width / 4, height / 2 - height / 4, width / 2 + width / 4, height / 2 + height / 4, pr, pg, pb, 130)
+        call draw_centered_text("VICTORY", width / 2, y0 - big * 4, big, ar, ag, ab, 245)
+        call draw_centered_text(">> GATE IS DARK. COIL IS SILENT", width / 2, y0 + small * 4, small, pr, pg, pb, 225)
+        call draw_centered_text(">> SOL CONFIRMS EVACUATION COMPLETE", width / 2, y0 + small * 10, small, pr, pg, pb, 225)
+        call draw_centered_text(">> PHOSPHOR-LEAD, COME HOME", width / 2, y0 + small * 16, small, pr, pg, pb, 225)
+        call draw_centered_text(">> WE LOG THIS ONE IN LEGEND", width / 2, y0 + small * 22, small, pr, pg, pb, 225)
+        call draw_centered_text(trim(score_text), width / 2, y0 + small * 31, small, 255, 220, 90, 220)
+        call draw_centered_text(trim(high_text), width / 2, y0 + small * 37, small, 0, 230, 255, 210)
+        call draw_centered_text("PRESS R OR ENTER", width / 2, y0 + small * 44, small, ar, ag, ab, 220)
+    end subroutine render_victory
 
     type(camera3) function scene_camera(gs)
         type(game_state_t), intent(in) :: gs

@@ -155,8 +155,12 @@ contains
             rows = [character(len=5) :: " ### ", "#   #", "#   #", " ####", "    #", "    #", " ### "]
         case (":")
             rows = [character(len=5) :: "     ", "  #  ", "  #  ", "     ", "  #  ", "  #  ", "     "]
+        case (",")
+            rows = [character(len=5) :: "     ", "     ", "     ", "     ", "     ", "  #  ", " #   "]
         case ("-")
             rows = [character(len=5) :: "     ", "     ", "     ", " ### ", "     ", "     ", "     "]
+        case (">")
+            rows = [character(len=5) :: "#    ", " #   ", "  #  ", "   # ", "  #  ", " #   ", "#    "]
         case ("/")
             rows = [character(len=5) :: "    #", "   # ", "   # ", "  #  ", " #   ", " #   ", "#    "]
         case (".")
