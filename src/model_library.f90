@@ -34,6 +34,10 @@ module model_library
 
     public :: build_player_model
     public :: build_enemy_model
+    public :: build_hunter_model
+    public :: build_skimmer_model
+    public :: build_striker_model
+    public :: build_warden_model
     public :: build_harrower_model
     public :: build_seer_model
     public :: build_maw_model
@@ -115,6 +119,172 @@ contains
         call set_edge(model, 17, 2, 11, 255, 255, 255)
         call set_edge(model, 18, 3, 11, 255, 255, 255)
     end subroutine build_enemy_model
+
+    subroutine build_hunter_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "enemy_hunter", 13, 22, 1.62_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.00_rk,  1.25_rk), &
+            vec3(-0.55_rk,  0.15_rk,  0.75_rk), &
+            vec3( 0.55_rk,  0.15_rk,  0.75_rk), &
+            vec3( 0.00_rk,  0.00_rk,  0.20_rk), &
+            vec3(-1.35_rk,  0.25_rk, -0.25_rk), &
+            vec3( 1.35_rk,  0.25_rk, -0.25_rk), &
+            vec3(-0.85_rk, -0.35_rk, -0.95_rk), &
+            vec3( 0.85_rk, -0.35_rk, -0.95_rk), &
+            vec3( 0.00_rk,  0.00_rk, -1.20_rk), &
+            vec3( 0.00_rk,  0.55_rk, -0.15_rk), &
+            vec3( 0.00_rk, -0.55_rk, -0.25_rk), &
+            vec3(-0.35_rk, -0.15_rk,  1.05_rk), &
+            vec3( 0.35_rk, -0.15_rk,  1.05_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 255, 60, 120)
+        call set_edge(model, 2, 1, 3, 255, 60, 120)
+        call set_edge(model, 3, 2, 4, 255, 40, 190)
+        call set_edge(model, 4, 3, 4, 255, 40, 190)
+        call set_edge(model, 5, 2, 5, 255, 90, 60)
+        call set_edge(model, 6, 3, 6, 255, 90, 60)
+        call set_edge(model, 7, 5, 7, 255, 180, 50)
+        call set_edge(model, 8, 6, 8, 255, 180, 50)
+        call set_edge(model, 9, 7, 9, 255, 60, 120)
+        call set_edge(model, 10, 8, 9, 255, 60, 120)
+        call set_edge(model, 11, 5, 10, 180, 255, 90)
+        call set_edge(model, 12, 6, 10, 180, 255, 90)
+        call set_edge(model, 13, 7, 11, 180, 255, 90)
+        call set_edge(model, 14, 8, 11, 180, 255, 90)
+        call set_edge(model, 15, 10, 4, 255, 255, 120)
+        call set_edge(model, 16, 11, 4, 255, 255, 120)
+        call set_edge(model, 17, 12, 2, 255, 255, 255)
+        call set_edge(model, 18, 13, 3, 255, 255, 255)
+        call set_edge(model, 19, 12, 1, 255, 90, 60)
+        call set_edge(model, 20, 13, 1, 255, 90, 60)
+        call set_edge(model, 21, 5, 9, 255, 40, 190)
+        call set_edge(model, 22, 6, 9, 255, 40, 190)
+    end subroutine build_hunter_model
+
+    subroutine build_skimmer_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "enemy_skimmer", 10, 16, 1.75_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.00_rk,  1.00_rk), &
+            vec3(-1.65_rk,  0.08_rk,  0.10_rk), &
+            vec3( 1.65_rk,  0.08_rk,  0.10_rk), &
+            vec3(-1.25_rk, -0.10_rk, -0.80_rk), &
+            vec3( 1.25_rk, -0.10_rk, -0.80_rk), &
+            vec3( 0.00_rk, -0.18_rk, -1.05_rk), &
+            vec3(-0.55_rk,  0.18_rk,  0.25_rk), &
+            vec3( 0.55_rk,  0.18_rk,  0.25_rk), &
+            vec3(-0.35_rk, -0.18_rk, -0.30_rk), &
+            vec3( 0.35_rk, -0.18_rk, -0.30_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 255, 40, 170)
+        call set_edge(model, 2, 1, 3, 255, 40, 170)
+        call set_edge(model, 3, 2, 4, 210, 255, 90)
+        call set_edge(model, 4, 3, 5, 210, 255, 90)
+        call set_edge(model, 5, 4, 6, 255, 90, 60)
+        call set_edge(model, 6, 5, 6, 255, 90, 60)
+        call set_edge(model, 7, 2, 7, 255, 255, 255)
+        call set_edge(model, 8, 3, 8, 255, 255, 255)
+        call set_edge(model, 9, 7, 8, 180, 255, 90)
+        call set_edge(model, 10, 7, 9, 255, 40, 170)
+        call set_edge(model, 11, 8, 10, 255, 40, 170)
+        call set_edge(model, 12, 9, 10, 255, 90, 60)
+        call set_edge(model, 13, 9, 6, 210, 255, 90)
+        call set_edge(model, 14, 10, 6, 210, 255, 90)
+        call set_edge(model, 15, 4, 9, 255, 255, 120)
+        call set_edge(model, 16, 5, 10, 255, 255, 120)
+    end subroutine build_skimmer_model
+
+    subroutine build_striker_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "enemy_striker", 10, 17, 1.68_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.45_rk,  1.45_rk), &
+            vec3( 0.00_rk, -0.45_rk,  0.95_rk), &
+            vec3(-0.45_rk,  0.00_rk,  0.25_rk), &
+            vec3( 0.45_rk,  0.00_rk,  0.25_rk), &
+            vec3( 0.00_rk,  0.00_rk, -1.25_rk), &
+            vec3(-0.82_rk, -0.22_rk, -0.55_rk), &
+            vec3( 0.82_rk, -0.22_rk, -0.55_rk), &
+            vec3( 0.00_rk,  0.78_rk, -0.20_rk), &
+            vec3(-0.22_rk, -0.78_rk, -0.15_rk), &
+            vec3( 0.22_rk, -0.78_rk, -0.15_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 3, 255, 70, 70)
+        call set_edge(model, 2, 1, 4, 255, 70, 70)
+        call set_edge(model, 3, 2, 3, 255, 210, 60)
+        call set_edge(model, 4, 2, 4, 255, 210, 60)
+        call set_edge(model, 5, 3, 5, 255, 40, 180)
+        call set_edge(model, 6, 4, 5, 255, 40, 180)
+        call set_edge(model, 7, 3, 6, 180, 255, 90)
+        call set_edge(model, 8, 4, 7, 180, 255, 90)
+        call set_edge(model, 9, 6, 5, 255, 70, 70)
+        call set_edge(model, 10, 7, 5, 255, 70, 70)
+        call set_edge(model, 11, 1, 8, 255, 255, 255)
+        call set_edge(model, 12, 8, 5, 255, 210, 60)
+        call set_edge(model, 13, 2, 9, 255, 255, 255)
+        call set_edge(model, 14, 2, 10, 255, 255, 255)
+        call set_edge(model, 15, 9, 6, 255, 40, 180)
+        call set_edge(model, 16, 10, 7, 255, 40, 180)
+        call set_edge(model, 17, 9, 10, 255, 210, 60)
+    end subroutine build_striker_model
+
+    subroutine build_warden_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "enemy_warden", 14, 24, 1.72_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  1.00_rk,  0.20_rk), &
+            vec3( 0.72_rk,  0.72_rk,  0.20_rk), &
+            vec3( 1.00_rk,  0.00_rk,  0.20_rk), &
+            vec3( 0.72_rk, -0.72_rk,  0.20_rk), &
+            vec3( 0.00_rk, -1.00_rk,  0.20_rk), &
+            vec3(-0.72_rk, -0.72_rk,  0.20_rk), &
+            vec3(-1.00_rk,  0.00_rk,  0.20_rk), &
+            vec3(-0.72_rk,  0.72_rk,  0.20_rk), &
+            vec3( 0.00_rk,  0.00_rk,  0.90_rk), &
+            vec3( 0.00_rk,  0.00_rk, -0.70_rk), &
+            vec3( 1.45_rk,  0.00_rk, -0.20_rk), &
+            vec3(-1.45_rk,  0.00_rk, -0.20_rk), &
+            vec3( 0.00_rk,  1.45_rk, -0.20_rk), &
+            vec3( 0.00_rk, -1.45_rk, -0.20_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 190, 80, 255)
+        call set_edge(model, 2, 2, 3, 190, 80, 255)
+        call set_edge(model, 3, 3, 4, 190, 80, 255)
+        call set_edge(model, 4, 4, 5, 190, 80, 255)
+        call set_edge(model, 5, 5, 6, 190, 80, 255)
+        call set_edge(model, 6, 6, 7, 190, 80, 255)
+        call set_edge(model, 7, 7, 8, 190, 80, 255)
+        call set_edge(model, 8, 8, 1, 190, 80, 255)
+        call set_edge(model, 9, 1, 9, 255, 255, 255)
+        call set_edge(model, 10, 3, 9, 255, 255, 255)
+        call set_edge(model, 11, 5, 9, 255, 255, 255)
+        call set_edge(model, 12, 7, 9, 255, 255, 255)
+        call set_edge(model, 13, 1, 10, 180, 255, 90)
+        call set_edge(model, 14, 3, 10, 180, 255, 90)
+        call set_edge(model, 15, 5, 10, 180, 255, 90)
+        call set_edge(model, 16, 7, 10, 180, 255, 90)
+        call set_edge(model, 17, 10, 11, 255, 80, 80)
+        call set_edge(model, 18, 10, 12, 255, 80, 80)
+        call set_edge(model, 19, 10, 13, 255, 80, 80)
+        call set_edge(model, 20, 10, 14, 255, 80, 80)
+        call set_edge(model, 21, 2, 11, 255, 210, 60)
+        call set_edge(model, 22, 6, 12, 255, 210, 60)
+        call set_edge(model, 23, 8, 13, 255, 210, 60)
+        call set_edge(model, 24, 4, 14, 255, 210, 60)
+    end subroutine build_warden_model
 
     subroutine build_harrower_model(model)
         type(wire_model), intent(out) :: model

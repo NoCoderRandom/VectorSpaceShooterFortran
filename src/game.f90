@@ -8,6 +8,7 @@ module game
         key_a, key_d, key_f, key_p, key_r, key_s, key_w, &
         key_return, key_escape, key_space, key_f12, key_right, key_left, key_down, key_up, key_lshift
     use model_library, only: wire_model, screen_line, build_player_model, build_enemy_model, build_gate_model, &
+        build_hunter_model, build_skimmer_model, build_striker_model, build_warden_model, &
         build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
@@ -29,8 +30,13 @@ module game
 
     integer, parameter :: max_stars = 220
     integer, parameter :: max_enemies = 48
-    integer, parameter :: max_particles = 420
+    integer, parameter :: max_particles = 720
     integer, parameter :: max_lines = 4096
+
+    integer, parameter :: particle_spark = 1
+    integer, parameter :: particle_ring = 2
+    integer, parameter :: particle_chunk = 3
+    integer, parameter :: particle_flash = 4
 
     integer, parameter :: waves_per_sector = 3
     integer, parameter :: max_sector = 3
@@ -71,6 +77,10 @@ module game
         type(vec3) :: velocity = vec3(0.0_rk, 0.0_rk, 0.0_rk)
         real(rk) :: ttl = 0.0_rk
         real(rk) :: max_ttl = 1.0_rk
+        real(rk) :: angle = 0.0_rk
+        real(rk) :: angular_velocity = 0.0_rk
+        real(rk) :: size = 1.0_rk
+        integer :: kind = particle_spark
         integer :: r = 255
         integer :: g = 255
         integer :: b = 255
@@ -94,6 +104,9 @@ module game
         real(rk) :: shot_flash = 0.0_rk
         real(rk) :: laser_x = 0.0_rk
         real(rk) :: laser_y = 0.0_rk
+        real(rk) :: laser_target_x = 0.0_rk
+        real(rk) :: laser_target_y = 0.0_rk
+        logical :: laser_target_locked = .false.
         real(rk) :: spawn_timer = 0.0_rk
         real(rk) :: danger_timer = 0.0_rk
         real(rk) :: message_timer = 0.0_rk
@@ -101,6 +114,8 @@ module game
         real(rk) :: time = 0.0_rk
         real(rk) :: sector_intro_timer = 0.0_rk
         real(rk) :: demo_palette_timer = 0.0_rk
+        real(rk) :: sector_palette_timer = 0.0_rk
+        integer :: sector_palette_from = 1
         real(rk) :: boss_intro_timer = 0.0_rk
         real(rk) :: boss_victory_timer = 0.0_rk
         real(rk) :: boss_attack_timer = 0.0_rk
@@ -118,7 +133,7 @@ module game
         type(enemy_t) :: enemies(max_enemies)
         type(particle_t) :: particles(max_particles)
         type(wire_model) :: player_model
-        type(wire_model) :: enemy_model
+        type(wire_model) :: enemy_models(5)
         type(wire_model) :: boss_models(max_sector)
         type(wire_model) :: gate_model
         type(wire_model) :: shield_gate_model
@@ -295,7 +310,11 @@ contains
         deallocate(seed)
 
         call build_player_model(gs%player_model)
-        call build_enemy_model(gs%enemy_model)
+        call build_enemy_model(gs%enemy_models(1))
+        call build_hunter_model(gs%enemy_models(2))
+        call build_skimmer_model(gs%enemy_models(3))
+        call build_striker_model(gs%enemy_models(4))
+        call build_warden_model(gs%enemy_models(5))
         call build_harrower_model(gs%boss_models(1))
         call build_seer_model(gs%boss_models(2))
         call build_maw_model(gs%boss_models(3))
@@ -341,6 +360,8 @@ contains
         gs%score = 0
         gs%wave = 1
         gs%sector = 1
+        gs%sector_palette_from = 1
+        gs%sector_palette_timer = 0.0_rk
         gs%sector_wave = 1
         gs%lives = 3
         gs%kills = 0
@@ -351,11 +372,15 @@ contains
         gs%reticle_y = 0.0_rk
         gs%fire_cooldown = 0.15_rk
         gs%shot_flash = 0.0_rk
+        gs%laser_target_x = 0.0_rk
+        gs%laser_target_y = 0.0_rk
+        gs%laser_target_locked = .false.
         gs%spawn_timer = 0.05_rk
         gs%danger_timer = 0.0_rk
         gs%message_timer = 2.0_rk
         gs%sector_intro_timer = 2.6_rk
         gs%demo_palette_timer = 0.0_rk
+        gs%sector_palette_timer = 0.0_rk
         gs%boss_intro_timer = 0.0_rk
         gs%boss_victory_timer = 0.0_rk
         gs%boss_attack_timer = 0.0_rk
@@ -419,10 +444,12 @@ contains
         gs%time = gs%time + dt
         gs%fire_cooldown = max(0.0_rk, gs%fire_cooldown - dt)
         gs%shot_flash = max(0.0_rk, gs%shot_flash - dt)
+        if (gs%shot_flash <= 0.0_rk) gs%laser_target_locked = .false.
         gs%danger_timer = max(0.0_rk, gs%danger_timer - dt)
         gs%message_timer = max(0.0_rk, gs%message_timer - dt)
         gs%screen_shake = max(0.0_rk, gs%screen_shake - dt * 1.8_rk)
         if (gs%state == state_play) gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
+        gs%sector_palette_timer = max(0.0_rk, gs%sector_palette_timer - dt)
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
 
         call update_boss_timers(gs, dt)
@@ -651,7 +678,7 @@ contains
         gs%demo_palette_timer = gs%demo_palette_timer + dt
         if (gs%demo_palette_timer >= 9.0_rk) then
             gs%demo_palette_timer = modulo(gs%demo_palette_timer, 9.0_rk)
-            gs%sector = 1 + mod(gs%sector, max_sector)
+            call set_sector(gs, 1 + mod(gs%sector, max_sector))
             gs%sector_wave = 1
             gs%kills_sector_wave = 0
             gs%sector_intro_timer = 2.8_rk
@@ -704,6 +731,56 @@ contains
         end do
     end subroutine find_demo_target
 
+    subroutine find_lock_target(gs, width, height, index, screen, radius_px, in_damage_range)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer, intent(out) :: index
+        type(vec2), intent(out) :: screen
+        real(rk), intent(out) :: radius_px
+        logical, intent(out) :: in_damage_range
+        type(camera3) :: cam
+        type(vec2) :: candidate_screen
+        type(vec3) :: pos
+        real(rk) :: depth
+        real(rk) :: scale_px
+        real(rk) :: cx
+        real(rk) :: cy
+        real(rk) :: dist
+        real(rk) :: candidate_radius
+        real(rk) :: best_depth
+        integer :: i
+
+        index = 0
+        screen = vec2(0.0_rk, 0.0_rk)
+        radius_px = 0.0_rk
+        in_damage_range = .false.
+        best_depth = huge(1.0_rk)
+        cx = 0.5_rk * real(width, rk) + gs%reticle_x * 0.42_rk * real(width, rk)
+        cy = 0.5_rk * real(height, rk) - gs%reticle_y * 0.38_rk * real(height, rk)
+        cam = scene_camera(gs)
+
+        do i = 1, max_enemies
+            if (.not. gs%enemies(i)%active) cycle
+            pos = enemy_position(gs%enemies(i))
+            if (.not. project_point(pos, cam, width, height, candidate_screen, depth, scale_px)) cycle
+            if (gs%enemies(i)%is_boss) then
+                candidate_radius = max(42.0_rk, gs%boss_models(gs%enemies(i)%boss_kind)%radius * &
+                    boss_scale(gs%enemies(i)%boss_kind, pos%z) * scale_px * 0.88_rk)
+            else
+                candidate_radius = max(20.0_rk, gs%enemy_models(gs%enemies(i)%pattern)%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
+            end if
+            dist = sqrt((candidate_screen%x - cx) ** 2 + (candidate_screen%y - cy) ** 2)
+            if (dist <= candidate_radius * 1.72_rk .and. depth < best_depth) then
+                index = i
+                screen = candidate_screen
+                radius_px = candidate_radius
+                in_damage_range = dist <= candidate_radius
+                best_depth = depth
+            end if
+        end do
+    end subroutine find_lock_target
+
     subroutine update_enemies(gs, dt)
         type(game_state_t), intent(inout) :: gs
         real(rk), intent(in) :: dt
@@ -751,6 +828,7 @@ contains
             else
                 gs%particles(i)%position = add3(gs%particles(i)%position, scale3(gs%particles(i)%velocity, dt))
                 gs%particles(i)%velocity = scale3(gs%particles(i)%velocity, 0.992_rk)
+                gs%particles(i)%angle = gs%particles(i)%angle + gs%particles(i)%angular_velocity * dt
             end if
         end do
     end subroutine update_particles
@@ -911,18 +989,10 @@ contains
         type(game_state_t), intent(inout) :: gs
         integer, intent(in) :: width
         integer, intent(in) :: height
-        type(camera3) :: cam
         type(vec2) :: screen
-        type(vec3) :: pos
-        real(rk) :: depth
-        real(rk) :: scale_px
-        real(rk) :: cx
-        real(rk) :: cy
-        real(rk) :: dist
         real(rk) :: radius_px
-        real(rk) :: best_depth
         integer :: best
-        integer :: i
+        logical :: in_damage_range
 
         block
             real(rk) :: jitter
@@ -936,33 +1006,18 @@ contains
         gs%shot_flash = 0.11_rk
         gs%laser_x = gs%reticle_x
         gs%laser_y = gs%reticle_y
+        gs%laser_target_locked = .false.
         call platform_audio_beep(780.0, 0.045, 0.16)
         call platform_audio_beep(1140.0, 0.025, 0.08)
 
-        best = 0
-        best_depth = huge(1.0_rk)
-        cx = 0.5_rk * real(width, rk) + gs%reticle_x * 0.42_rk * real(width, rk)
-        cy = 0.5_rk * real(height, rk) - gs%reticle_y * 0.38_rk * real(height, rk)
-        cam = scene_camera(gs)
-
-        do i = 1, max_enemies
-            if (.not. gs%enemies(i)%active) cycle
-            pos = enemy_position(gs%enemies(i))
-            if (.not. project_point(pos, cam, width, height, screen, depth, scale_px)) cycle
-            if (gs%enemies(i)%is_boss) then
-                radius_px = max(42.0_rk, gs%boss_models(gs%enemies(i)%boss_kind)%radius * &
-                    boss_scale(gs%enemies(i)%boss_kind, pos%z) * scale_px * 0.88_rk)
-            else
-                radius_px = max(20.0_rk, gs%enemy_model%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
-            end if
-            dist = sqrt((screen%x - cx) ** 2 + (screen%y - cy) ** 2)
-            if (dist <= radius_px .and. depth < best_depth) then
-                best = i
-                best_depth = depth
-            end if
-        end do
-
+        call find_lock_target(gs, width, height, best, screen, radius_px, in_damage_range)
         if (best > 0) then
+            gs%laser_target_locked = .true.
+            gs%laser_target_x = screen%x
+            gs%laser_target_y = screen%y
+        end if
+
+        if (best > 0 .and. in_damage_range) then
             call damage_enemy(gs, best)
         end if
     end subroutine fire_weapon
@@ -1098,6 +1153,9 @@ contains
         integer :: pr
         integer :: pg
         integer :: pb
+        integer :: burst
+        real(rk) :: offset
+        type(vec3) :: burst_pos
 
         call sector_palette_accent(gs%enemies(index)%boss_kind, ar, ag, ab)
         call sector_palette_primary(gs%enemies(index)%boss_kind, pr, pg, pb)
@@ -1106,6 +1164,11 @@ contains
             gs%high_score = gs%score
             if (.not. gs%demo_mode) call save_high_score(gs%high_score)
         end if
+        do burst = 1, 3
+            offset = real(burst - 2, rk) * 0.46_rk
+            burst_pos = add3(pos, vec3(offset, 0.28_rk * sin(real(burst, rk) * 1.7_rk), 0.18_rk * cos(real(burst, rk))))
+            call spawn_explosion(gs, burst_pos, 36, 255, 130, 70)
+        end do
         call spawn_explosion(gs, pos, 120, ar, ag, ab)
         call spawn_explosion(gs, pos, 72, pr, pg, pb)
         gs%screen_shake = max(gs%screen_shake, 1.05_rk)
@@ -1144,7 +1207,7 @@ contains
             return
         end if
 
-        gs%sector = min(max_sector, gs%boss_cleared_sector + 1)
+        call set_sector(gs, min(max_sector, gs%boss_cleared_sector + 1))
         gs%sector_wave = 1
         gs%wave = gs%wave + 1
         gs%kills_sector_wave = 0
@@ -1236,6 +1299,84 @@ contains
         end select
     end subroutine sector_palette_dim
 
+    subroutine set_sector(gs, new_sector)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: new_sector
+        integer :: clamped_sector
+
+        clamped_sector = max(1, min(max_sector, new_sector))
+        if (clamped_sector == gs%sector) return
+
+        gs%sector_palette_from = gs%sector
+        gs%sector = clamped_sector
+        gs%sector_palette_timer = 1.0_rk
+    end subroutine set_sector
+
+    subroutine blended_palette_primary(gs, r, g, b)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+
+        call blended_palette(gs, sector_palette_primary, r, g, b)
+    end subroutine blended_palette_primary
+
+    subroutine blended_palette_accent(gs, r, g, b)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+
+        call blended_palette(gs, sector_palette_accent, r, g, b)
+    end subroutine blended_palette_accent
+
+    subroutine blended_palette_dim(gs, r, g, b)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+
+        call blended_palette(gs, sector_palette_dim, r, g, b)
+    end subroutine blended_palette_dim
+
+    subroutine blended_palette(gs, palette_proc, r, g, b)
+        type(game_state_t), intent(in) :: gs
+        interface
+            pure subroutine palette_proc(sector, r, g, b)
+                integer, intent(in) :: sector
+                integer, intent(out) :: r
+                integer, intent(out) :: g
+                integer, intent(out) :: b
+            end subroutine palette_proc
+        end interface
+        integer, intent(out) :: r
+        integer, intent(out) :: g
+        integer, intent(out) :: b
+        integer :: nr
+        integer :: ng
+        integer :: nb
+        integer :: or
+        integer :: og
+        integer :: ob
+        real(rk) :: old_weight
+        real(rk) :: new_weight
+
+        call palette_proc(gs%sector, nr, ng, nb)
+        if (gs%sector_palette_timer <= 0.0_rk) then
+            r = nr
+            g = ng
+            b = nb
+            return
+        end if
+
+        call palette_proc(gs%sector_palette_from, or, og, ob)
+        old_weight = max(0.0_rk, min(1.0_rk, gs%sector_palette_timer))
+        new_weight = 1.0_rk - old_weight
+        r = max(0, min(255, nint(real(or, rk) * old_weight + real(nr, rk) * new_weight)))
+        g = max(0, min(255, nint(real(og, rk) * old_weight + real(ng, rk) * new_weight)))
+        b = max(0, min(255, nint(real(ob, rk) * old_weight + real(nb, rk) * new_weight)))
+    end subroutine blended_palette
+
     pure function boss_name(sector) result(name)
         integer, intent(in) :: sector
         character(len=24) :: name
@@ -1310,8 +1451,70 @@ contains
         real(rk) :: rz
         real(rk) :: speed
         type(vec3) :: dir
+        integer :: slot
+        integer :: chunks
+        real(rk) :: angle
 
         spawned = 0
+
+        slot = reserve_particle(gs)
+        if (slot > 0) then
+            gs%particles(slot)%active = .true.
+            gs%particles(slot)%kind = particle_ring
+            gs%particles(slot)%position = origin
+            gs%particles(slot)%velocity = vec3(0.0_rk, 0.0_rk, 0.0_rk)
+            gs%particles(slot)%ttl = 0.42_rk
+            gs%particles(slot)%max_ttl = gs%particles(slot)%ttl
+            gs%particles(slot)%angle = 0.0_rk
+            gs%particles(slot)%angular_velocity = 1.5_rk
+            gs%particles(slot)%size = 0.55_rk + 0.014_rk * real(min(80, count), rk)
+            gs%particles(slot)%r = r
+            gs%particles(slot)%g = g
+            gs%particles(slot)%b = b
+        end if
+
+        if (count >= 30) then
+            slot = reserve_particle(gs)
+            if (slot > 0) then
+                gs%particles(slot)%active = .true.
+                gs%particles(slot)%kind = particle_flash
+                gs%particles(slot)%position = origin
+                gs%particles(slot)%velocity = vec3(0.0_rk, 0.0_rk, 0.0_rk)
+                gs%particles(slot)%ttl = 0.075_rk
+                gs%particles(slot)%max_ttl = gs%particles(slot)%ttl
+                gs%particles(slot)%angle = 0.0_rk
+                gs%particles(slot)%angular_velocity = 0.0_rk
+                gs%particles(slot)%size = 1.10_rk + 0.012_rk * real(min(90, count), rk)
+                gs%particles(slot)%r = 255
+                gs%particles(slot)%g = 255
+                gs%particles(slot)%b = 255
+            end if
+        end if
+
+        chunks = max(3, min(12, count / 5))
+        do i = 1, chunks
+            slot = reserve_particle(gs)
+            if (slot <= 0) exit
+            call random_number(rx)
+            call random_number(ry)
+            call random_number(rz)
+            call random_number(angle)
+            dir = vec3(rx * 2.0_rk - 1.0_rk, ry * 2.0_rk - 1.0_rk, rz * 2.0_rk - 1.0_rk)
+            speed = 1.8_rk + rz * 3.8_rk
+            gs%particles(slot)%active = .true.
+            gs%particles(slot)%kind = particle_chunk
+            gs%particles(slot)%position = origin
+            gs%particles(slot)%velocity = scale3(dir, speed)
+            gs%particles(slot)%ttl = 0.55_rk + rx * 0.45_rk
+            gs%particles(slot)%max_ttl = gs%particles(slot)%ttl
+            gs%particles(slot)%angle = angle * 2.0_rk * pi
+            gs%particles(slot)%angular_velocity = (ry * 2.0_rk - 1.0_rk) * 8.0_rk
+            gs%particles(slot)%size = 0.28_rk + 0.16_rk * rz
+            gs%particles(slot)%r = max(80, r)
+            gs%particles(slot)%g = max(70, g)
+            gs%particles(slot)%b = max(50, b)
+        end do
+
         do i = 1, max_particles
             if (spawned >= count) exit
             if (gs%particles(i)%active) cycle
@@ -1321,16 +1524,33 @@ contains
             dir = vec3(rx * 2.0_rk - 1.0_rk, ry * 2.0_rk - 1.0_rk, rz * 2.0_rk - 1.0_rk)
             speed = 2.8_rk + rz * 5.0_rk
             gs%particles(i)%active = .true.
+            gs%particles(i)%kind = particle_spark
             gs%particles(i)%position = origin
             gs%particles(i)%velocity = scale3(dir, speed)
             gs%particles(i)%ttl = 0.35_rk + rx * 0.55_rk
             gs%particles(i)%max_ttl = gs%particles(i)%ttl
+            gs%particles(i)%angle = rz * 2.0_rk * pi
+            gs%particles(i)%angular_velocity = 0.0_rk
+            gs%particles(i)%size = 0.18_rk
             gs%particles(i)%r = r
             gs%particles(i)%g = g
             gs%particles(i)%b = b
             spawned = spawned + 1
         end do
     end subroutine spawn_explosion
+
+    integer function reserve_particle(gs) result(slot)
+        type(game_state_t), intent(in) :: gs
+        integer :: i
+
+        slot = 0
+        do i = 1, max_particles
+            if (.not. gs%particles(i)%active) then
+                slot = i
+                return
+            end if
+        end do
+    end function reserve_particle
 
     subroutine render_game(gs, width, height)
         type(game_state_t), intent(inout) :: gs
@@ -1351,6 +1571,7 @@ contains
         case (state_title)
             call render_title(gs, width, height)
         case (state_play)
+            call render_lock_on(gs, width, height)
             call render_cockpit(gs, width, height)
             call render_sector_intro(gs, width, height)
             call render_hud(gs, width, height)
@@ -1392,7 +1613,7 @@ contains
         logical :: ok2
 
         cam = scene_camera(gs)
-        call sector_palette_primary(gs%sector, pr, pg, pb)
+        call blended_palette_primary(gs, pr, pg, pb)
         do i = 1, max_stars
             p1 = vec3(gs%stars(i)%x, gs%stars(i)%y, gs%stars(i)%z)
             p2 = vec3(gs%stars(i)%x * 1.002_rk, gs%stars(i)%y * 1.002_rk, gs%stars(i)%z + 0.55_rk)
@@ -1430,7 +1651,7 @@ contains
 
         cam = scene_camera(gs)
         phase = modulo(gs%time * 5.2_rk, 4.0_rk)
-        call sector_palette_dim(gs%sector, dr, dg, db)
+        call blended_palette_dim(gs, dr, dg, db)
 
         do i = 0, 18
             z = 4.0_rk + real(i, rk) * 4.0_rk - phase
@@ -1524,7 +1745,7 @@ contains
                 xf%scale = enemy_scale(pos%z)
                 boost = merge(2.25_rk, 1.0_rk, gs%enemies(i)%flash > 0.0_rk)
                 alpha = max(105, min(255, nint(290.0_rk - pos%z * 3.2_rk)))
-                call append_model_lines(gs%enemy_model, xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+                call append_model_lines(gs%enemy_models(gs%enemies(i)%pattern), xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
             end if
         end do
 
@@ -1555,6 +1776,45 @@ contains
         call draw_line_glow(nint(screen%x), nint(screen%y), width / 2, height - max(42, height / 12) - 20, 255, 220, 80, alpha / 2, 1)
     end subroutine render_boss_attack
 
+    subroutine render_lock_on(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        type(vec2) :: screen
+        real(rk) :: radius_px
+        integer :: index
+        integer :: bracket
+        integer :: gap
+        integer :: r
+        integer :: g
+        integer :: b
+        integer :: cx
+        integer :: cy
+        logical :: in_damage_range
+
+        call find_lock_target(gs, width, height, index, screen, radius_px, in_damage_range)
+        if (index <= 0) return
+
+        if (in_damage_range) then
+            r = 255; g = 70; b = 55
+        else
+            r = 255; g = 220; b = 70
+        end if
+        cx = nint(screen%x)
+        cy = nint(screen%y)
+        gap = max(14, nint(radius_px * 0.92_rk))
+        bracket = max(8, min(24, gap / 2))
+
+        call draw_line_glow(cx - gap, cy - gap, cx - gap + bracket, cy - gap, r, g, b, 210, 1)
+        call draw_line_glow(cx - gap, cy - gap, cx - gap, cy - gap + bracket, r, g, b, 210, 1)
+        call draw_line_glow(cx + gap, cy - gap, cx + gap - bracket, cy - gap, r, g, b, 210, 1)
+        call draw_line_glow(cx + gap, cy - gap, cx + gap, cy - gap + bracket, r, g, b, 210, 1)
+        call draw_line_glow(cx - gap, cy + gap, cx - gap + bracket, cy + gap, r, g, b, 210, 1)
+        call draw_line_glow(cx - gap, cy + gap, cx - gap, cy + gap - bracket, r, g, b, 210, 1)
+        call draw_line_glow(cx + gap, cy + gap, cx + gap - bracket, cy + gap, r, g, b, 210, 1)
+        call draw_line_glow(cx + gap, cy + gap, cx + gap, cy + gap - bracket, r, g, b, 210, 1)
+    end subroutine render_lock_on
+
     subroutine render_particles(gs, width, height)
         type(game_state_t), intent(in) :: gs
         integer, intent(in) :: width
@@ -1565,20 +1825,69 @@ contains
         type(vec3) :: tail
         real(rk) :: d1
         real(rk) :: d2
+        real(rk) :: scale_px
         real(rk) :: t
+        real(rk) :: age
+        real(rk) :: theta1
+        real(rk) :: theta2
+        real(rk) :: radius
+        real(rk) :: seg_len
         integer :: i
+        integer :: j
         integer :: alpha
+        integer :: x1
+        integer :: y1
+        integer :: x2
+        integer :: y2
 
         cam = scene_camera(gs)
         do i = 1, max_particles
             if (.not. gs%particles(i)%active) cycle
-            tail = add3(gs%particles(i)%position, scale3(gs%particles(i)%velocity, -0.055_rk))
-            if (.not. project_point(gs%particles(i)%position, cam, width, height, a, d1)) cycle
-            if (.not. project_point(tail, cam, width, height, b, d2)) cycle
             t = max(0.0_rk, min(1.0_rk, gs%particles(i)%ttl / gs%particles(i)%max_ttl))
+            age = 1.0_rk - t
             alpha = max(20, min(255, nint(255.0_rk * t)))
-            call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), &
-                gs%particles(i)%r, gs%particles(i)%g, gs%particles(i)%b, alpha, 1)
+            if (.not. project_point(gs%particles(i)%position, cam, width, height, a, d1, scale_px)) cycle
+
+            select case (gs%particles(i)%kind)
+            case (particle_ring)
+                radius = max(5.0_rk, gs%particles(i)%size * scale_px * (0.25_rk + 1.85_rk * age))
+                do j = 0, 19
+                    theta1 = gs%particles(i)%angle + real(j, rk) * 2.0_rk * pi / 20.0_rk
+                    theta2 = theta1 + 0.19_rk
+                    x1 = nint(a%x + cos(theta1) * radius)
+                    y1 = nint(a%y + sin(theta1) * radius)
+                    x2 = nint(a%x + cos(theta2) * radius)
+                    y2 = nint(a%y + sin(theta2) * radius)
+                    call draw_line_glow(x1, y1, x2, y2, gs%particles(i)%r, gs%particles(i)%g, gs%particles(i)%b, alpha, 1)
+                end do
+            case (particle_chunk)
+                seg_len = max(5.0_rk, gs%particles(i)%size * scale_px)
+                theta1 = gs%particles(i)%angle
+                x1 = nint(a%x - cos(theta1) * seg_len)
+                y1 = nint(a%y - sin(theta1) * seg_len)
+                x2 = nint(a%x + cos(theta1) * seg_len)
+                y2 = nint(a%y + sin(theta1) * seg_len)
+                call draw_line_glow(x1, y1, x2, y2, gs%particles(i)%r, gs%particles(i)%g, gs%particles(i)%b, alpha, 1)
+                theta2 = theta1 + 0.5_rk * pi
+                call draw_line_glow(nint(a%x - cos(theta2) * seg_len * 0.55_rk), &
+                    nint(a%y - sin(theta2) * seg_len * 0.55_rk), &
+                    nint(a%x + cos(theta2) * seg_len * 0.55_rk), &
+                    nint(a%y + sin(theta2) * seg_len * 0.55_rk), &
+                    gs%particles(i)%r, gs%particles(i)%g, gs%particles(i)%b, alpha / 2, 1)
+            case (particle_flash)
+                radius = max(18.0_rk, gs%particles(i)%size * scale_px * (0.65_rk + age))
+                do j = 0, 9
+                    theta1 = real(j, rk) * 2.0_rk * pi / 10.0_rk
+                    call draw_line_glow(nint(a%x), nint(a%y), &
+                        nint(a%x + cos(theta1) * radius), nint(a%y + sin(theta1) * radius), &
+                        255, 255, 255, max(40, alpha), 1)
+                end do
+            case default
+                tail = add3(gs%particles(i)%position, scale3(gs%particles(i)%velocity, -0.055_rk))
+                if (.not. project_point(tail, cam, width, height, b, d2)) cycle
+                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), &
+                    gs%particles(i)%r, gs%particles(i)%g, gs%particles(i)%b, alpha, 1)
+            end select
         end do
     end subroutine render_particles
 
@@ -1600,11 +1909,15 @@ contains
         integer :: dr
         integer :: dg
         integer :: db
+        integer :: tx
+        integer :: ty
+        integer :: tick
+        integer :: x
         real(rk) :: flash
 
-        call sector_palette_primary(gs%sector, pr, pg, pb)
-        call sector_palette_accent(gs%sector, ar, ag, ab)
-        call sector_palette_dim(gs%sector, dr, dg, db)
+        call blended_palette_primary(gs, pr, pg, pb)
+        call blended_palette_accent(gs, ar, ag, ab)
+        call blended_palette_dim(gs, dr, dg, db)
         cx = nint(0.5_rk * real(width, rk) + gs%reticle_x * 0.42_rk * real(width, rk))
         cy = nint(0.5_rk * real(height, rk) - gs%reticle_y * 0.38_rk * real(height, rk))
         flash = real(gs%shot_flash / 0.11_rk)
@@ -1617,11 +1930,23 @@ contains
         call draw_line_glow(width / 2 + span, height - 24, width / 2 + span / 3, by, pr, pg, pb, 190, 2)
         call draw_line_glow(width / 2 - span / 3, by, width / 2 + span / 3, by, ar, ag, ab, 160, 1)
         call draw_line_glow(width / 2 - span, height - 24, width / 2 + span, height - 24, dr, dg, db, 120, 1)
+        call draw_line_glow(18, height / 2 + height / 10, 18, height - 64, pr, pg, pb, 70, 1)
+        call draw_line_glow(width - 18, height / 2 + height / 10, width - 18, height - 64, pr, pg, pb, 70, 1)
+        do tick = -5, 5
+            x = width / 2 + tick * span / 12
+            call draw_line_glow(x, by + 4, x, by + 10 + 2 * abs(tick), dr, dg, db, 95, 1)
+        end do
 
         if (gs%shot_flash > 0.0_rk) then
-            call draw_line_glow(width / 2 - span / 4, by, cx, cy, ar, ag, ab, nint(230.0_rk * flash), 2)
-            call draw_line_glow(width / 2 + span / 4, by, cx, cy, ar, ag, ab, nint(230.0_rk * flash), 2)
-            call draw_line_glow(bx, by - 10, cx, cy, pr, pg, pb, nint(150.0_rk * flash), 1)
+            tx = cx
+            ty = cy
+            if (gs%laser_target_locked) then
+                tx = nint(gs%laser_target_x)
+                ty = nint(gs%laser_target_y)
+            end if
+            call draw_line_glow(width / 2 - span / 4, by, tx, ty, ar, ag, ab, nint(230.0_rk * flash), 2)
+            call draw_line_glow(width / 2 + span / 4, by, tx, ty, ar, ag, ab, nint(230.0_rk * flash), 2)
+            call draw_line_glow(bx, by - 10, tx, ty, pr, pg, pb, nint(150.0_rk * flash), 1)
         end if
     end subroutine render_cockpit
 
@@ -1643,8 +1968,8 @@ contains
         integer :: ab
 
         unit = max(3, width / 285)
-        call sector_palette_primary(gs%sector, pr, pg, pb)
-        call sector_palette_accent(gs%sector, ar, ag, ab)
+        call blended_palette_primary(gs, pr, pg, pb)
+        call blended_palette_accent(gs, ar, ag, ab)
         write(score_text, '("SCORE ", I7.7)') gs%score
         write(wave_text, '("WAVE ", I2)') gs%wave
         write(lives_text, '("HULL ", I1)') max(0, gs%lives)
@@ -1717,8 +2042,8 @@ contains
 
         if (gs%sector_intro_timer <= 0.0_rk) return
 
-        call sector_palette_primary(gs%sector, pr, pg, pb)
-        call sector_palette_accent(gs%sector, ar, ag, ab)
+        call blended_palette_primary(gs, pr, pg, pb)
+        call blended_palette_accent(gs, ar, ag, ab)
         phase = max(0.0_rk, min(1.0_rk, (intro_duration - gs%sector_intro_timer) / intro_duration))
         fade = sin(pi * phase)
         alpha = max(0, min(255, nint(245.0_rk * fade)))
@@ -1855,8 +2180,8 @@ contains
         integer :: ag
         integer :: ab
 
-        call sector_palette_primary(gs%sector, pr, pg, pb)
-        call sector_palette_accent(gs%sector, ar, ag, ab)
+        call blended_palette_primary(gs, pr, pg, pb)
+        call blended_palette_accent(gs, ar, ag, ab)
         big = max(6, width / 145)
         small = max(2, min(max(3, width / 320), max(2, (width - 80) / (36 * 6))))
         y0 = height / 2 - height / 5
