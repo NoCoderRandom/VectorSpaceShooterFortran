@@ -49,6 +49,7 @@ module model_library
     public :: build_spine_model
     public :: build_rocket_model
     public :: build_lancer_model
+    public :: build_pickup_model
     public :: append_model_lines
 
 contains
@@ -720,6 +721,44 @@ contains
         call set_edge(model, 13, 6, 7, 120, 40, 140)
         call set_edge(model, 14, 8, 9, 200, 60, 60)
     end subroutine build_lancer_model
+
+    subroutine build_pickup_model(model, r, g, bcol)
+        type(wire_model), intent(out) :: model
+        integer, intent(in) :: r
+        integer, intent(in) :: g
+        integer, intent(in) :: bcol
+        integer :: r_lo
+        integer :: g_lo
+        integer :: b_lo
+
+        call allocate_model(model, "lattice_shard", 6, 12, 0.45_rk)
+
+        model%vertices = [ &
+            vec3( 0.55_rk,  0.00_rk,  0.00_rk), &
+            vec3(-0.55_rk,  0.00_rk,  0.00_rk), &
+            vec3( 0.00_rk,  0.55_rk,  0.00_rk), &
+            vec3( 0.00_rk, -0.55_rk,  0.00_rk), &
+            vec3( 0.00_rk,  0.00_rk,  0.55_rk), &
+            vec3( 0.00_rk,  0.00_rk, -0.55_rk)  &
+        ]
+
+        r_lo = max(0, r - 70)
+        g_lo = max(0, g - 70)
+        b_lo = max(0, bcol - 70)
+
+        call set_edge(model, 1, 1, 3, r, g, bcol)
+        call set_edge(model, 2, 3, 2, r, g, bcol)
+        call set_edge(model, 3, 2, 4, r, g, bcol)
+        call set_edge(model, 4, 4, 1, r, g, bcol)
+        call set_edge(model, 5, 1, 5, r, g, bcol)
+        call set_edge(model, 6, 3, 5, r, g, bcol)
+        call set_edge(model, 7, 2, 5, r, g, bcol)
+        call set_edge(model, 8, 4, 5, r, g, bcol)
+        call set_edge(model, 9, 1, 6, r_lo, g_lo, b_lo)
+        call set_edge(model, 10, 3, 6, r_lo, g_lo, b_lo)
+        call set_edge(model, 11, 2, 6, r_lo, g_lo, b_lo)
+        call set_edge(model, 12, 4, 6, r_lo, g_lo, b_lo)
+    end subroutine build_pickup_model
 
     subroutine append_model_lines(model, transform, camera, width, height, lines, line_count, max_lines, alpha, color_boost)
         type(wire_model), intent(in) :: model

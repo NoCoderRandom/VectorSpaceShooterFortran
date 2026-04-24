@@ -11,7 +11,7 @@ module game
         build_hunter_model, build_skimmer_model, build_striker_model, build_warden_model, &
         build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, &
         build_buoy_model, build_shard_model, build_spine_model, &
-        build_rocket_model, build_lancer_model, append_model_lines
+        build_rocket_model, build_lancer_model, build_pickup_model, append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
     implicit none
@@ -38,6 +38,11 @@ module game
     integer, parameter :: max_hazard_kinds = 3
     integer, parameter :: max_rockets = 8
     integer, parameter :: pattern_lancer = 6
+    integer, parameter :: max_shards = 20
+    integer, parameter :: shard_shield = 1
+    integer, parameter :: shard_hull = 2
+    integer, parameter :: shard_amber = 3
+    integer, parameter :: max_shard_kinds = 3
 
     integer, parameter :: particle_spark = 1
     integer, parameter :: particle_ring = 2
@@ -91,6 +96,20 @@ module game
         real(rk) :: speed = 7.0_rk
         real(rk) :: trail_phase = 0.0_rk
     end type rocket_t
+
+    type :: shard_t
+        logical :: active = .false.
+        real(rk) :: x = 0.0_rk
+        real(rk) :: y = 0.0_rk
+        real(rk) :: z = 6.0_rk
+        real(rk) :: vx = 0.0_rk
+        real(rk) :: vy = 0.0_rk
+        real(rk) :: vz = -2.0_rk
+        real(rk) :: age = 0.0_rk
+        real(rk) :: lifetime = 4.5_rk
+        real(rk) :: spin = 0.0_rk
+        integer :: kind = shard_amber
+    end type shard_t
 
     type :: particle_t
         logical :: active = .false.
@@ -186,9 +205,14 @@ module game
         type(particle_t) :: particles(max_particles)
         type(hazard_t) :: hazards(max_hazards)
         type(rocket_t) :: rockets(max_rockets)
+        type(shard_t) :: shards(max_shards)
         real(rk) :: lancer_spawn_timer = 0.0_rk
         real(rk) :: klaxon_timer = 0.0_rk
         real(rk) :: rocket_warning_dir = 0.0_rk
+        real(rk) :: shield_pickup_flash = 0.0_rk
+        real(rk) :: hull_pickup_flash = 0.0_rk
+        real(rk) :: amber_pickup_flash = 0.0_rk
+        real(rk) :: amber_pickup_score = 0.0_rk
         type(wire_model) :: player_model
         type(wire_model) :: enemy_models(5)
         type(wire_model) :: boss_models(max_sector)
@@ -197,6 +221,7 @@ module game
         type(wire_model) :: hazard_models(max_hazard_kinds)
         type(wire_model) :: rocket_model
         type(wire_model) :: lancer_model
+        type(wire_model) :: pickup_models(max_shard_kinds)
         type(screen_line) :: lines(max_lines)
     end type game_state_t
 
@@ -385,6 +410,9 @@ contains
         call build_spine_model(gs%hazard_models(hazard_spine))
         call build_rocket_model(gs%rocket_model)
         call build_lancer_model(gs%lancer_model)
+        call build_pickup_model(gs%pickup_models(shard_shield), 80, 220, 255)
+        call build_pickup_model(gs%pickup_models(shard_hull), 120, 255, 140)
+        call build_pickup_model(gs%pickup_models(shard_amber), 255, 200, 80)
         call init_stars(gs)
         gs%high_score = load_high_score()
         gs%demo_mode = demo_mode
@@ -489,9 +517,16 @@ contains
         do i = 1, max_rockets
             gs%rockets(i)%active = .false.
         end do
+        do i = 1, max_shards
+            gs%shards(i)%active = .false.
+        end do
         gs%lancer_spawn_timer = 6.0_rk
         gs%klaxon_timer = 0.0_rk
         gs%rocket_warning_dir = 0.0_rk
+        gs%shield_pickup_flash = 0.0_rk
+        gs%hull_pickup_flash = 0.0_rk
+        gs%amber_pickup_flash = 0.0_rk
+        gs%amber_pickup_score = 0.0_rk
         do i = 1, 5
             call spawn_enemy(gs, 18.0_rk + real(i, rk) * 4.2_rk)
         end do
@@ -541,6 +576,9 @@ contains
         gs%ship_iframe = max(0.0_rk, gs%ship_iframe - dt)
         gs%hazard_flash = max(0.0_rk, gs%hazard_flash - dt * 2.4_rk)
         gs%brace_timer = max(0.0_rk, gs%brace_timer - dt)
+        gs%shield_pickup_flash = max(0.0_rk, gs%shield_pickup_flash - dt * 2.0_rk)
+        gs%hull_pickup_flash = max(0.0_rk, gs%hull_pickup_flash - dt * 2.0_rk)
+        gs%amber_pickup_flash = max(0.0_rk, gs%amber_pickup_flash - dt * 1.6_rk)
         if (gs%state == state_play) gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
         gs%sector_palette_timer = max(0.0_rk, gs%sector_palette_timer - dt)
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
@@ -559,6 +597,7 @@ contains
             call update_enemies(gs, dt)
             call update_lancer_fire(gs, dt)
             call update_rockets(gs, dt)
+            call update_shards(gs, dt)
             call update_particles(gs, dt)
             call update_spawning(gs, dt)
             call update_hazard_spawning(gs, dt)
@@ -1157,6 +1196,181 @@ contains
         gs%klaxon_timer = interval
         call platform_audio_beep(real(pitch), 0.040, 0.080)
     end subroutine update_rocket_audio
+
+    subroutine update_shards(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk), parameter :: magnet_range = 4.5_rk
+        real(rk), parameter :: magnet_strength = 2.6_rk
+        real(rk), parameter :: pickup_radius = 0.85_rk
+        real(rk) :: dx
+        real(rk) :: dy
+        real(rk) :: dz
+        real(rk) :: dist
+        real(rk) :: inv
+        integer :: i
+
+        if (gs%state /= state_play) return
+
+        do i = 1, max_shards
+            if (.not. gs%shards(i)%active) cycle
+            gs%shards(i)%age = gs%shards(i)%age + dt
+            if (gs%shards(i)%age >= gs%shards(i)%lifetime) then
+                gs%shards(i)%active = .false.
+                cycle
+            end if
+
+            dx = gs%ship_x - gs%shards(i)%x
+            dy = gs%ship_y - gs%shards(i)%y
+            dz = 0.0_rk - gs%shards(i)%z
+            dist = sqrt(dx * dx + dy * dy + dz * dz)
+            if (dist < magnet_range .and. dist > 0.05_rk) then
+                inv = magnet_strength / dist
+                gs%shards(i)%vx = gs%shards(i)%vx + dx * inv * dt
+                gs%shards(i)%vy = gs%shards(i)%vy + dy * inv * dt
+            end if
+            gs%shards(i)%vz = gs%shards(i)%vz * max(0.0_rk, 1.0_rk - 0.35_rk * dt)
+            gs%shards(i)%x = gs%shards(i)%x + gs%shards(i)%vx * dt
+            gs%shards(i)%y = gs%shards(i)%y + gs%shards(i)%vy * dt
+            gs%shards(i)%z = gs%shards(i)%z + gs%shards(i)%vz * dt
+            gs%shards(i)%spin = gs%shards(i)%spin + dt * 4.5_rk
+
+            if (gs%shards(i)%z < -2.0_rk) then
+                gs%shards(i)%active = .false.
+                cycle
+            end if
+
+            if (gs%shards(i)%z < 1.6_rk .and. gs%shards(i)%z > -0.6_rk) then
+                dx = gs%shards(i)%x - gs%ship_x
+                dy = gs%shards(i)%y - gs%ship_y
+                if (sqrt(dx * dx + dy * dy) < pickup_radius) then
+                    call collect_shard(gs, i)
+                end if
+            end if
+        end do
+    end subroutine update_shards
+
+    subroutine collect_shard(gs, index)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: index
+        integer :: amber_points
+
+        if (.not. gs%shards(index)%active) return
+
+        select case (gs%shards(index)%kind)
+        case (shard_shield)
+            gs%shield = min(1.0_rk, gs%shield + 0.28_rk)
+            gs%shield_pickup_flash = 1.0_rk
+            call platform_audio_beep(720.0, 0.055, 0.12)
+            call platform_audio_beep(960.0, 0.040, 0.09)
+        case (shard_hull)
+            gs%lives = min(5, gs%lives + 1)
+            gs%hull_pickup_flash = 1.0_rk
+            gs%message = "HULL RESTORED"
+            gs%message_timer = 1.1_rk
+            call platform_audio_beep(520.0, 0.08, 0.14)
+            call platform_audio_beep(780.0, 0.06, 0.10)
+        case (shard_amber)
+            amber_points = nint(180.0_rk * sector_score_mult(gs%sector))
+            gs%score = gs%score + amber_points
+            gs%amber_pickup_flash = 1.0_rk
+            gs%amber_pickup_score = real(amber_points, rk)
+            if (gs%score > gs%high_score) then
+                gs%high_score = gs%score
+                if (.not. gs%demo_mode) call save_high_score(gs%high_score)
+            end if
+            call platform_audio_beep(1050.0, 0.045, 0.10)
+        end select
+
+        gs%shards(index)%active = .false.
+    end subroutine collect_shard
+
+    subroutine maybe_drop_shard(gs, pos, kill_value)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3), intent(in) :: pos
+        integer, intent(in) :: kill_value
+        real(rk) :: roll
+
+        call random_number(roll)
+        if (kill_value == 2) then
+            call spawn_shard(gs, pos, shard_hull)
+            return
+        end if
+        if (roll < 0.10_rk) then
+            call spawn_shard(gs, pos, shard_shield)
+        else if (roll < 0.32_rk) then
+            call spawn_shard(gs, pos, shard_amber)
+        end if
+    end subroutine maybe_drop_shard
+
+    subroutine spawn_shard(gs, pos, kind)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3), intent(in) :: pos
+        integer, intent(in) :: kind
+        integer :: slot
+        integer :: i
+        real(rk) :: rx
+        real(rk) :: ry
+        real(rk) :: rz
+
+        slot = 0
+        do i = 1, max_shards
+            if (.not. gs%shards(i)%active) then
+                slot = i
+                exit
+            end if
+        end do
+        if (slot == 0) return
+
+        call random_number(rx)
+        call random_number(ry)
+        call random_number(rz)
+
+        gs%shards(slot)%active = .true.
+        gs%shards(slot)%kind = kind
+        gs%shards(slot)%x = pos%x + (rx - 0.5_rk) * 0.4_rk
+        gs%shards(slot)%y = pos%y + (ry - 0.5_rk) * 0.4_rk
+        gs%shards(slot)%z = max(3.0_rk, pos%z)
+        gs%shards(slot)%vx = (rx - 0.5_rk) * 0.6_rk
+        gs%shards(slot)%vy = (ry - 0.5_rk) * 0.6_rk
+        gs%shards(slot)%vz = -1.6_rk - rz * 1.2_rk
+        gs%shards(slot)%age = 0.0_rk
+        gs%shards(slot)%lifetime = 4.8_rk + rz * 1.2_rk
+        gs%shards(slot)%spin = rx * 2.0_rk * pi
+    end subroutine spawn_shard
+
+    subroutine render_shards(gs, width, height)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        type(camera3) :: cam
+        type(transform3) :: xf
+        integer :: line_count
+        integer :: alpha
+        integer :: i
+        integer :: kind
+        real(rk) :: fade
+        real(rk) :: boost
+
+        cam = scene_camera(gs)
+        line_count = 0
+
+        do i = 1, max_shards
+            if (.not. gs%shards(i)%active) cycle
+            kind = gs%shards(i)%kind
+            if (kind < 1 .or. kind > max_shard_kinds) kind = shard_amber
+            xf%position = vec3(gs%shards(i)%x, gs%shards(i)%y, gs%shards(i)%z)
+            xf%rotation = vec3(gs%shards(i)%spin * 0.7_rk, gs%shards(i)%spin, gs%shards(i)%spin * 0.4_rk)
+            xf%scale = 0.8_rk + 0.12_rk * sin(gs%shards(i)%spin * 2.0_rk)
+            fade = 1.0_rk - max(0.0_rk, (gs%shards(i)%age - gs%shards(i)%lifetime + 0.8_rk)) / 0.8_rk
+            fade = min(1.0_rk, max(0.15_rk, fade))
+            alpha = max(60, min(255, nint(240.0_rk * fade)))
+            boost = 1.0_rk + 0.4_rk * (0.5_rk + 0.5_rk * sin(gs%shards(i)%spin * 3.0_rk))
+            call append_model_lines(gs%pickup_models(kind), xf, cam, width, height, &
+                gs%lines, line_count, max_lines, alpha, boost)
+        end do
+        call draw_screen_lines(gs%lines, line_count)
+    end subroutine render_shards
 
     subroutine update_hazard_spawning(gs, dt)
         type(game_state_t), intent(inout) :: gs
@@ -1916,6 +2130,7 @@ contains
             gs%message = "TARGET BROKEN"
             gs%message_timer = 0.55_rk
             call play_kill_audio()
+            call maybe_drop_shard(gs, pos, 1)
             if (gs%kills_sector_wave >= sector_wave_quota(gs%sector_wave)) then
                 call advance_wave(gs)
             end if
@@ -2034,6 +2249,9 @@ contains
         end do
         call spawn_explosion(gs, pos, 120, ar, ag, ab)
         call spawn_explosion(gs, pos, 72, pr, pg, pb)
+        call maybe_drop_shard(gs, pos, 2)
+        call spawn_shard(gs, pos, shard_amber)
+        call spawn_shard(gs, pos, shard_amber)
         gs%screen_shake = max(gs%screen_shake, 1.05_rk)
         gs%message = trim(boss_name(gs%enemies(index)%boss_kind)) // " DOWN"
         gs%message_timer = 1.8_rk
@@ -2424,6 +2642,7 @@ contains
             call render_particles(gs, width, height)
             call render_enemies(gs, width, height)
             call render_rockets(gs, width, height)
+            call render_shards(gs, width, height)
             call render_boss_attack(gs, width, height)
         end if
 
