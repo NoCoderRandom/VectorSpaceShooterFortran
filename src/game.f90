@@ -213,6 +213,15 @@ module game
         real(rk) :: boss_phase_pause = 0.0_rk
         real(rk) :: boss_phase_banner = 0.0_rk
         integer :: boss_phase_banner_number = 0
+        character(len=48) :: comm_text = ""
+        real(rk) :: comm_timer = 0.0_rk
+        real(rk) :: comm_cooldown = 0.0_rk
+        integer :: comm_r = 255
+        integer :: comm_g = 200
+        integer :: comm_b = 80
+        integer :: comm_events_fired = 0
+        integer :: last_comm_sector = 0
+        integer :: last_comm_boss_sector = 0
         integer :: transmission_id = tx_none
         integer :: transmission_next_state = state_play
         integer :: transmission_visible_lines = 0
@@ -524,6 +533,12 @@ contains
         gs%boss_phase_pause = 0.0_rk
         gs%boss_phase_banner = 0.0_rk
         gs%boss_phase_banner_number = 0
+        gs%comm_text = ""
+        gs%comm_timer = 0.0_rk
+        gs%comm_cooldown = 0.0_rk
+        gs%comm_events_fired = 0
+        gs%last_comm_sector = 0
+        gs%last_comm_boss_sector = 0
         gs%transmission_id = tx_none
         gs%transmission_next_state = state_play
         gs%transmission_visible_lines = 0
@@ -633,6 +648,8 @@ contains
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
         gs%boss_phase_pause = max(0.0_rk, gs%boss_phase_pause - dt)
         gs%boss_phase_banner = max(0.0_rk, gs%boss_phase_banner - dt)
+        gs%comm_timer = max(0.0_rk, gs%comm_timer - dt)
+        gs%comm_cooldown = max(0.0_rk, gs%comm_cooldown - dt)
 
         call update_boss_timers(gs, dt)
 
@@ -658,6 +675,7 @@ contains
             call update_rocket_audio(gs, dt)
             call update_coil_chatter(gs, dt)
             call update_boss_attack(gs, dt)
+            call check_comm_events(gs)
             call update_demo_autopilot(gs, dt, width, height)
             if (gs%state == state_play .and. &
                 (fire_edge .or. (gs%demo_mode .and. gs%fire_cooldown <= 0.0_rk)) .and. gs%fire_cooldown <= 0.0_rk) then
@@ -3496,6 +3514,17 @@ contains
             call draw_centered_text(trim(gs%message), width / 2, height / 6, max(4, width / 230), 255, 255, 120, &
                 max(40, min(255, nint(230.0_rk * min(1.0_rk, gs%message_timer)))))
         end if
+
+        if (gs%comm_timer > 0.0_rk .and. len_trim(gs%comm_text) > 0) then
+            block
+                integer :: comm_alpha
+                integer :: comm_unit
+                comm_alpha = max(80, min(255, nint(255.0_rk * min(1.0_rk, gs%comm_timer))))
+                comm_unit = max(2, unit - 1)
+                call draw_text(trim(gs%comm_text), 24, height - 58 - 7 * comm_unit, comm_unit, &
+                    gs%comm_r, gs%comm_g, gs%comm_b, comm_alpha)
+            end block
+        end if
     end subroutine render_hud
 
     subroutine render_boss_hud(gs, width, height)
@@ -3739,6 +3768,92 @@ contains
         end select
         scale = scale + max(0.0_rk, min(0.16_rk, (22.0_rk - z) * 0.007_rk))
     end function boss_scale
+
+    subroutine trigger_comm(gs, wingmate, line)
+        type(game_state_t), intent(inout) :: gs
+        character(len=1), intent(in) :: wingmate
+        character(len=*), intent(in) :: line
+
+        if (gs%demo_mode) return
+        if (gs%comm_cooldown > 0.0_rk .and. gs%comm_timer > 0.2_rk) return
+
+        select case (wingmate)
+        case ("K")
+            gs%comm_r = 255; gs%comm_g = 180; gs%comm_b = 60
+            gs%comm_text = "[K] " // line
+        case ("V")
+            gs%comm_r = 100; gs%comm_g = 220; gs%comm_b = 255
+            gs%comm_text = "[V] " // line
+        case ("E")
+            gs%comm_r = 120; gs%comm_g = 255; gs%comm_b = 140
+            gs%comm_text = "[E] " // line
+        case default
+            gs%comm_r = 220; gs%comm_g = 220; gs%comm_b = 220
+            gs%comm_text = line
+        end select
+        gs%comm_timer = 2.4_rk
+        gs%comm_cooldown = 1.6_rk
+    end subroutine trigger_comm
+
+    subroutine check_comm_events(gs)
+        type(game_state_t), intent(inout) :: gs
+        integer :: rockets_active
+        integer :: wrecks_active
+        integer :: i
+
+        if (gs%state /= state_play) return
+
+        if (gs%sector /= gs%last_comm_sector) then
+            gs%last_comm_sector = gs%sector
+            select case (gs%sector)
+            case (1); call trigger_comm(gs, "V", "FIRST ONES MINE")
+            case (2); call trigger_comm(gs, "E", "ROCKS ARE ALIVE. CAREFUL")
+            case (3); call trigger_comm(gs, "K", "WE FINISH THIS")
+            case (4); call trigger_comm(gs, "V", "WHOLE GRAVEYARD. LOOK AT IT")
+            case (5); call trigger_comm(gs, "E", "READ THE LIGHT")
+            case (6); call trigger_comm(gs, "K", "JUST US NOW")
+            end select
+        end if
+
+        if (gs%boss_fight .and. gs%sector /= gs%last_comm_boss_sector) then
+            gs%last_comm_boss_sector = gs%sector
+            call trigger_comm(gs, "K", "BOSS CONTACT. STAY LOOSE")
+        end if
+
+        rockets_active = 0
+        do i = 1, max_rockets
+            if (gs%rockets(i)%active) rockets_active = rockets_active + 1
+        end do
+        if (rockets_active > 0 .and. iand(gs%comm_events_fired, 1) == 0) then
+            gs%comm_events_fired = ior(gs%comm_events_fired, 1)
+            call trigger_comm(gs, "K", "LANCE IN THE AIR")
+        end if
+        if (rockets_active >= 2 .and. iand(gs%comm_events_fired, 2) == 0) then
+            gs%comm_events_fired = ior(gs%comm_events_fired, 2)
+            call trigger_comm(gs, "K", "TWO LANCES. KILL THEM")
+        end if
+
+        wrecks_active = 0
+        do i = 1, max_hazards
+            if (gs%hazards(i)%active .and. gs%hazards(i)%kind == hazard_wreck) wrecks_active = wrecks_active + 1
+        end do
+        if (wrecks_active > 0 .and. iand(gs%comm_events_fired, 4) == 0) then
+            gs%comm_events_fired = ior(gs%comm_events_fired, 4)
+            call trigger_comm(gs, "E", "WRECK, TWELVE OCLOCK")
+        end if
+
+        if (gs%shield < 0.3_rk .and. iand(gs%comm_events_fired, 8) == 0) then
+            gs%comm_events_fired = ior(gs%comm_events_fired, 8)
+            call trigger_comm(gs, "K", "SHIELDS THIN, LEAD")
+        else if (gs%shield > 0.7_rk .and. iand(gs%comm_events_fired, 8) /= 0) then
+            gs%comm_events_fired = iand(gs%comm_events_fired, not(8))
+        end if
+
+        if (gs%lives == 1 .and. iand(gs%comm_events_fired, 16) == 0) then
+            gs%comm_events_fired = ior(gs%comm_events_fired, 16)
+            call trigger_comm(gs, "K", "LAST HULL")
+        end if
+    end subroutine check_comm_events
 
     pure real(rk) function streak_multiplier(streak) result(mult)
         integer, intent(in) :: streak
