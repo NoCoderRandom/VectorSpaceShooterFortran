@@ -11,7 +11,7 @@ module game
         build_hunter_model, build_skimmer_model, build_striker_model, build_warden_model, &
         build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, &
         build_buoy_model, build_shard_model, build_spine_model, &
-        build_rocket_model, build_lancer_model, build_pickup_model, append_model_lines
+        build_rocket_model, build_lancer_model, build_pickup_model, build_cage_model, append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
     implicit none
@@ -43,6 +43,9 @@ module game
     integer, parameter :: shard_hull = 2
     integer, parameter :: shard_amber = 3
     integer, parameter :: max_shard_kinds = 3
+    integer, parameter :: variant_base = 0
+    integer, parameter :: variant_juggernaut = 1
+    integer, parameter :: variant_phantom = 2
 
     integer, parameter :: particle_spark = 1
     integer, parameter :: particle_ring = 2
@@ -85,6 +88,8 @@ module game
         integer :: hp_max = 1
         logical :: is_boss = .false.
         integer :: boss_kind = 0
+        integer :: variant = variant_base
+        logical :: cage_intact = .false.
     end type enemy_t
 
     type :: rocket_t
@@ -222,6 +227,7 @@ module game
         type(wire_model) :: rocket_model
         type(wire_model) :: lancer_model
         type(wire_model) :: pickup_models(max_shard_kinds)
+        type(wire_model) :: cage_model
         type(screen_line) :: lines(max_lines)
     end type game_state_t
 
@@ -413,6 +419,7 @@ contains
         call build_pickup_model(gs%pickup_models(shard_shield), 80, 220, 255)
         call build_pickup_model(gs%pickup_models(shard_hull), 120, 255, 140)
         call build_pickup_model(gs%pickup_models(shard_amber), 255, 200, 80)
+        call build_cage_model(gs%cage_model)
         call init_stars(gs)
         gs%high_score = load_high_score()
         gs%demo_mode = demo_mode
@@ -1650,11 +1657,14 @@ contains
 
         do i = 1, max_enemies
             if (.not. gs%enemies(i)%active) cycle
+            if (.not. phantom_visible(gs%enemies(i), gs%time)) cycle
             pos = enemy_position(gs%enemies(i))
             if (.not. project_point(pos, cam, width, height, candidate_screen, depth, scale_px)) cycle
             if (gs%enemies(i)%is_boss) then
                 candidate_radius = max(42.0_rk, gs%boss_models(gs%enemies(i)%boss_kind)%radius * &
                     boss_scale(gs%enemies(i)%boss_kind, pos%z) * scale_px * 0.88_rk)
+            else if (gs%enemies(i)%pattern == pattern_lancer) then
+                candidate_radius = max(22.0_rk, gs%lancer_model%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
             else
                 candidate_radius = max(20.0_rk, gs%enemy_models(gs%enemies(i)%pattern)%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
             end if
@@ -1877,7 +1887,33 @@ contains
         gs%enemies(slot)%hp_max = gs%enemies(slot)%hp
         gs%enemies(slot)%is_boss = .false.
         gs%enemies(slot)%boss_kind = 0
+        gs%enemies(slot)%variant = variant_base
+        gs%enemies(slot)%cage_intact = .false.
         gs%enemies(slot)%speed = 3.6_rk + real(gs%wave, rk) * 0.22_rk + rz * 1.35_rk
+
+        if (gs%enemies(slot)%pattern == 2 .and. gs%sector >= 3) then
+            block
+                real(rk) :: roll
+                call random_number(roll)
+                if (roll < 0.40_rk) then
+                    gs%enemies(slot)%variant = variant_juggernaut
+                    gs%enemies(slot)%cage_intact = .true.
+                    gs%enemies(slot)%hp = 2
+                    gs%enemies(slot)%hp_max = 2
+                    gs%enemies(slot)%speed = gs%enemies(slot)%speed * 0.78_rk
+                end if
+            end block
+        end if
+
+        if (gs%enemies(slot)%pattern == 3 .and. gs%sector >= 5) then
+            block
+                real(rk) :: roll
+                call random_number(roll)
+                if (roll < 0.45_rk) then
+                    gs%enemies(slot)%variant = variant_phantom
+                end if
+            end block
+        end if
         if (present(z_override)) then
             gs%enemies(slot)%z = z_override
         else
@@ -2107,6 +2143,21 @@ contains
         type(vec3) :: pos
 
         if (.not. gs%enemies(index)%active) return
+
+        if (gs%enemies(index)%variant == variant_juggernaut .and. gs%enemies(index)%cage_intact) then
+            gs%enemies(index)%cage_intact = .false.
+            gs%enemies(index)%hp = gs%enemies(index)%hp - 1
+            gs%enemies(index)%flash = 1.0_rk
+            pos = enemy_position(gs%enemies(index))
+            gs%score = gs%score + 40
+            call spawn_explosion(gs, pos, 20, 120, 255, 120)
+            call platform_audio_beep(1180.0, 0.04, 0.11)
+            call platform_audio_noise(2200.0, 0.06, 0.05, 4.0)
+            gs%message = "SHIELD BROKEN"
+            gs%message_timer = 0.5_rk
+            return
+        end if
+
         gs%enemies(index)%hp = gs%enemies(index)%hp - 1
         gs%enemies(index)%flash = 1.0_rk
         pos = enemy_position(gs%enemies(index))
@@ -2118,7 +2169,7 @@ contains
                 return
             end if
             gs%score = gs%score + nint(real(100 + gs%wave * 25 + max(0, nint((22.0_rk - pos%z) * 5.0_rk)), rk) &
-                * sector_score_mult(gs%sector))
+                * sector_score_mult(gs%sector) * merge(1.6_rk, 1.0_rk, gs%enemies(index)%variant /= variant_base))
             gs%kills = gs%kills + 1
             gs%kills_sector_wave = gs%kills_sector_wave + 1
             if (gs%score > gs%high_score) then
@@ -2881,7 +2932,25 @@ contains
                 xf%scale = enemy_scale(pos%z)
                 boost = merge(2.25_rk, 1.0_rk, gs%enemies(i)%flash > 0.0_rk)
                 alpha = max(105, min(255, nint(290.0_rk - pos%z * 3.2_rk)))
+                if (gs%enemies(i)%variant == variant_phantom .and. .not. phantom_visible(gs%enemies(i), gs%time)) then
+                    alpha = max(30, alpha / 5)
+                    boost = boost * 0.6_rk
+                end if
                 call append_model_lines(gs%enemy_models(gs%enemies(i)%pattern), xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+                if (gs%enemies(i)%variant == variant_juggernaut .and. gs%enemies(i)%cage_intact) then
+                    block
+                        type(transform3) :: cage_xf
+                        real(rk) :: cage_boost
+                        cage_xf%position = pos
+                        cage_xf%rotation = vec3(0.08_rk * sin(gs%enemies(i)%age * 0.6_rk), &
+                                                gs%enemies(i)%age * 0.28_rk, &
+                                                0.05_rk * sin(gs%enemies(i)%age * 0.9_rk))
+                        cage_xf%scale = enemy_scale(pos%z) * 1.25_rk
+                        cage_boost = 1.0_rk + 0.4_rk * (0.5_rk + 0.5_rk * sin(gs%time * 3.0_rk + gs%enemies(i)%phase))
+                        call append_model_lines(gs%cage_model, cage_xf, cam, width, height, &
+                            gs%lines, line_count, max_lines, max(120, alpha - 30), cage_boost)
+                    end block
+                end if
             end if
         end do
 
@@ -3440,6 +3509,19 @@ contains
         end select
         scale = scale + max(0.0_rk, min(0.16_rk, (22.0_rk - z) * 0.007_rk))
     end function boss_scale
+
+    pure logical function phantom_visible(enemy, time) result(visible)
+        type(enemy_t), intent(in) :: enemy
+        real(rk), intent(in) :: time
+        real(rk) :: phase
+
+        if (enemy%variant /= variant_phantom) then
+            visible = .true.
+            return
+        end if
+        phase = sin(time * 6.8_rk + enemy%phase * 1.3_rk)
+        visible = phase > -0.1_rk
+    end function phantom_visible
 
     pure integer function active_boss_index(gs) result(index)
         type(game_state_t), intent(in) :: gs

@@ -50,6 +50,7 @@ module model_library
     public :: build_rocket_model
     public :: build_lancer_model
     public :: build_pickup_model
+    public :: build_cage_model
     public :: append_model_lines
 
 contains
@@ -721,6 +722,36 @@ contains
         call set_edge(model, 13, 6, 7, 120, 40, 140)
         call set_edge(model, 14, 8, 9, 200, 60, 60)
     end subroutine build_lancer_model
+
+    subroutine build_cage_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "juggernaut_cage", 8, 12, 1.75_rk)
+
+        model%vertices = [ &
+            vec3(-1.20_rk, -0.95_rk, -1.05_rk), &
+            vec3( 1.20_rk, -0.95_rk, -1.05_rk), &
+            vec3( 1.20_rk,  0.95_rk, -1.05_rk), &
+            vec3(-1.20_rk,  0.95_rk, -1.05_rk), &
+            vec3(-1.20_rk, -0.95_rk,  1.25_rk), &
+            vec3( 1.20_rk, -0.95_rk,  1.25_rk), &
+            vec3( 1.20_rk,  0.95_rk,  1.25_rk), &
+            vec3(-1.20_rk,  0.95_rk,  1.25_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 120, 220, 80)
+        call set_edge(model, 2, 2, 3, 120, 220, 80)
+        call set_edge(model, 3, 3, 4, 120, 220, 80)
+        call set_edge(model, 4, 4, 1, 120, 220, 80)
+        call set_edge(model, 5, 5, 6, 160, 240, 120)
+        call set_edge(model, 6, 6, 7, 160, 240, 120)
+        call set_edge(model, 7, 7, 8, 160, 240, 120)
+        call set_edge(model, 8, 8, 5, 160, 240, 120)
+        call set_edge(model, 9, 1, 5, 80, 200, 60)
+        call set_edge(model, 10, 2, 6, 80, 200, 60)
+        call set_edge(model, 11, 3, 7, 80, 200, 60)
+        call set_edge(model, 12, 4, 8, 80, 200, 60)
+    end subroutine build_cage_model
 
     subroutine build_pickup_model(model, r, g, bcol)
         type(wire_model), intent(out) :: model
