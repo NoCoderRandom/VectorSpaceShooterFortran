@@ -209,6 +209,10 @@ module game
         real(rk) :: boss_attack_flash = 0.0_rk
         logical :: boss_fight = .false.
         integer :: boss_cleared_sector = 0
+        integer :: boss_phase = 1
+        real(rk) :: boss_phase_pause = 0.0_rk
+        real(rk) :: boss_phase_banner = 0.0_rk
+        integer :: boss_phase_banner_number = 0
         integer :: transmission_id = tx_none
         integer :: transmission_next_state = state_play
         integer :: transmission_visible_lines = 0
@@ -516,6 +520,10 @@ contains
         gs%boss_attack_flash = 0.0_rk
         gs%boss_fight = .false.
         gs%boss_cleared_sector = 0
+        gs%boss_phase = 1
+        gs%boss_phase_pause = 0.0_rk
+        gs%boss_phase_banner = 0.0_rk
+        gs%boss_phase_banner_number = 0
         gs%transmission_id = tx_none
         gs%transmission_next_state = state_play
         gs%transmission_visible_lines = 0
@@ -623,6 +631,8 @@ contains
         if (gs%state == state_play) gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
         gs%sector_palette_timer = max(0.0_rk, gs%sector_palette_timer - dt)
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
+        gs%boss_phase_pause = max(0.0_rk, gs%boss_phase_pause - dt)
+        gs%boss_phase_banner = max(0.0_rk, gs%boss_phase_banner - dt)
 
         call update_boss_timers(gs, dt)
 
@@ -2221,6 +2231,7 @@ contains
         type(vec3) :: pos
 
         if (.not. gs%enemies(index)%active) return
+        if (gs%enemies(index)%is_boss .and. gs%boss_phase_pause > 0.0_rk) return
 
         if (gs%enemies(index)%variant == variant_juggernaut .and. gs%enemies(index)%cage_intact) then
             gs%enemies(index)%cage_intact = .false.
@@ -2275,6 +2286,7 @@ contains
                 gs%score = gs%score + 35 * gs%sector
                 call spawn_explosion(gs, pos, 18, 255, 255, 180)
                 call play_damage_audio()
+                call maybe_trigger_boss_phase(gs, index)
             else
                 gs%score = gs%score + 25
                 call spawn_explosion(gs, pos, 12, 255, 255, 180)
@@ -2282,6 +2294,57 @@ contains
             end if
         end if
     end subroutine damage_enemy
+
+    subroutine maybe_trigger_boss_phase(gs, index)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: index
+        integer :: hp_max
+        integer :: hp_now
+        integer :: phases
+        real(rk) :: frac
+        real(rk) :: threshold_2
+        real(rk) :: threshold_3
+        integer :: target_phase
+
+        if (.not. gs%enemies(index)%is_boss) return
+        hp_max = gs%enemies(index)%hp_max
+        hp_now = gs%enemies(index)%hp
+        if (hp_max <= 0) return
+        frac = real(hp_now, rk) / real(hp_max, rk)
+
+        select case (gs%enemies(index)%boss_kind)
+        case (1, 2, 4, 5)
+            phases = 2
+        case default
+            phases = 3
+        end select
+
+        if (phases == 2) then
+            threshold_2 = 0.50_rk
+            target_phase = merge(2, 1, frac <= threshold_2)
+        else
+            threshold_2 = 0.66_rk
+            threshold_3 = 0.33_rk
+            if (frac <= threshold_3) then
+                target_phase = 3
+            else if (frac <= threshold_2) then
+                target_phase = 2
+            else
+                target_phase = 1
+            end if
+        end if
+
+        if (target_phase > gs%boss_phase) then
+            gs%boss_phase = target_phase
+            gs%boss_phase_pause = 0.65_rk
+            gs%boss_phase_banner = 1.6_rk
+            gs%boss_phase_banner_number = target_phase
+            gs%screen_shake = max(gs%screen_shake, 0.45_rk)
+            call platform_audio_beep(160.0, 0.12, 0.20)
+            call platform_audio_beep(260.0, 0.14, 0.16)
+            call platform_audio_beep(420.0, 0.18, 0.14)
+        end if
+    end subroutine maybe_trigger_boss_phase
 
     pure integer function sector_wave_quota(sector_wave) result(quota)
         integer, intent(in) :: sector_wave
@@ -2361,6 +2424,10 @@ contains
         gs%boss_attack_timer = 2.35_rk
         gs%boss_attack_flash = 0.0_rk
         gs%boss_cleared_sector = 0
+        gs%boss_phase = 1
+        gs%boss_phase_pause = 0.0_rk
+        gs%boss_phase_banner = 0.0_rk
+        gs%boss_phase_banner_number = 0
         gs%sector_intro_timer = 0.0_rk
         gs%message = "WARNING - " // trim(boss_name(gs%sector))
         gs%message_timer = 2.0_rk
@@ -2467,6 +2534,7 @@ contains
 
         if (.not. gs%boss_fight) return
         if (gs%boss_intro_timer > 0.0_rk .or. gs%boss_victory_timer > 0.0_rk) return
+        if (gs%boss_phase_pause > 0.0_rk) return
 
         index = active_boss_index(gs)
         if (index <= 0) return
@@ -2474,7 +2542,7 @@ contains
         gs%boss_attack_timer = gs%boss_attack_timer - dt
         if (gs%boss_attack_timer > 0.0_rk) return
 
-        gs%boss_attack_timer = max(1.45_rk, 2.25_rk - real(gs%sector, rk) * 0.22_rk)
+        gs%boss_attack_timer = max(0.95_rk, 2.25_rk - real(gs%sector, rk) * 0.22_rk - real(gs%boss_phase - 1, rk) * 0.32_rk)
         gs%boss_attack_flash = 0.26_rk
         pos = enemy_position(gs%enemies(index))
         call platform_audio_beep(95.0, 0.10, 0.16)
@@ -3409,6 +3477,19 @@ contains
         if (gs%perfect_banner_timer > 0.0_rk) then
             call draw_centered_text("PERFECT WAVE", width / 2, height / 4 + 10, max(5, width / 170), &
                 255, 220, 100, max(60, min(255, nint(255.0_rk * min(1.0_rk, gs%perfect_banner_timer)))))
+        end if
+
+        if (gs%boss_phase_banner > 0.0_rk .and. gs%boss_phase_banner_number > 1) then
+            block
+                character(len=16) :: phase_text
+                select case (gs%boss_phase_banner_number)
+                case (2); phase_text = "PHASE II"
+                case (3); phase_text = "PHASE III"
+                case default; phase_text = "PHASE"
+                end select
+                call draw_centered_text(trim(phase_text), width / 2, height / 3, max(6, width / 150), &
+                    255, 80, 80, max(80, min(255, nint(255.0_rk * min(1.0_rk, gs%boss_phase_banner)))))
+            end block
         end if
 
         if (gs%message_timer > 0.0_rk) then
