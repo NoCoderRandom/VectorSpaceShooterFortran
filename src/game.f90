@@ -9,7 +9,9 @@ module game
         key_return, key_escape, key_space, key_f12, key_right, key_left, key_down, key_up, key_lshift
     use model_library, only: wire_model, screen_line, build_player_model, build_enemy_model, build_gate_model, &
         build_hunter_model, build_skimmer_model, build_striker_model, build_warden_model, &
-        build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, append_model_lines
+        build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, &
+        build_buoy_model, build_shard_model, build_spine_model, &
+        build_rocket_model, build_lancer_model, append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
     implicit none
@@ -32,11 +34,17 @@ module game
     integer, parameter :: max_enemies = 48
     integer, parameter :: max_particles = 720
     integer, parameter :: max_lines = 4096
+    integer, parameter :: max_hazards = 32
+    integer, parameter :: max_hazard_kinds = 3
 
     integer, parameter :: particle_spark = 1
     integer, parameter :: particle_ring = 2
     integer, parameter :: particle_chunk = 3
     integer, parameter :: particle_flash = 4
+
+    integer, parameter :: hazard_buoy = 1
+    integer, parameter :: hazard_shard = 2
+    integer, parameter :: hazard_spine = 3
 
     integer, parameter :: waves_per_sector = 3
     integer, parameter :: max_sector = 3
@@ -86,6 +94,22 @@ module game
         integer :: b = 255
     end type particle_t
 
+    type :: hazard_t
+        logical :: active = .false.
+        real(rk) :: x = 0.0_rk
+        real(rk) :: y = 0.0_rk
+        real(rk) :: z = 30.0_rk
+        real(rk) :: vx = 0.0_rk
+        real(rk) :: vy = 0.0_rk
+        real(rk) :: speed = 6.0_rk
+        real(rk) :: rot = 0.0_rk
+        real(rk) :: rot_speed = 0.4_rk
+        real(rk) :: tilt = 0.0_rk
+        real(rk) :: scale = 1.0_rk
+        real(rk) :: radius = 1.0_rk
+        integer :: kind = hazard_buoy
+    end type hazard_t
+
     type :: game_state_t
         integer :: state = state_title
         integer :: score = 0
@@ -117,6 +141,16 @@ module game
         real(rk) :: message_timer = 0.0_rk
         real(rk) :: screen_shake = 0.0_rk
         real(rk) :: time = 0.0_rk
+        real(rk) :: ship_x = 0.0_rk
+        real(rk) :: ship_y = 0.0_rk
+        real(rk) :: ship_vx = 0.0_rk
+        real(rk) :: ship_vy = 0.0_rk
+        real(rk) :: ship_iframe = 0.0_rk
+        real(rk) :: hazard_flash = 0.0_rk
+        real(rk) :: brace_timer = 0.0_rk
+        integer :: brace_side = 0
+        real(rk) :: hazard_spawn_timer = 0.0_rk
+        real(rk) :: demo_ship_phase = 0.0_rk
         real(rk) :: sector_intro_timer = 0.0_rk
         real(rk) :: demo_palette_timer = 0.0_rk
         real(rk) :: sector_palette_timer = 0.0_rk
@@ -137,11 +171,15 @@ module game
         type(star_t) :: stars(max_stars)
         type(enemy_t) :: enemies(max_enemies)
         type(particle_t) :: particles(max_particles)
+        type(hazard_t) :: hazards(max_hazards)
         type(wire_model) :: player_model
         type(wire_model) :: enemy_models(5)
         type(wire_model) :: boss_models(max_sector)
         type(wire_model) :: gate_model
         type(wire_model) :: shield_gate_model
+        type(wire_model) :: hazard_models(max_hazard_kinds)
+        type(wire_model) :: rocket_model
+        type(wire_model) :: lancer_model
         type(screen_line) :: lines(max_lines)
     end type game_state_t
 
@@ -325,6 +363,11 @@ contains
         call build_maw_model(gs%boss_models(3))
         call build_gate_model(gs%gate_model)
         call build_shield_gate_model(gs%shield_gate_model)
+        call build_buoy_model(gs%hazard_models(hazard_buoy))
+        call build_shard_model(gs%hazard_models(hazard_shard))
+        call build_spine_model(gs%hazard_models(hazard_spine))
+        call build_rocket_model(gs%rocket_model)
+        call build_lancer_model(gs%lancer_model)
         call init_stars(gs)
         gs%high_score = load_high_score()
         gs%demo_mode = demo_mode
@@ -407,11 +450,24 @@ contains
             gs%message = "PHOSPHOR-LEAD CLEARED FOR LAUNCH"
         end if
         gs%paused = .false.
+        gs%ship_x = 0.0_rk
+        gs%ship_y = 0.0_rk
+        gs%ship_vx = 0.0_rk
+        gs%ship_vy = 0.0_rk
+        gs%ship_iframe = 0.0_rk
+        gs%hazard_flash = 0.0_rk
+        gs%brace_timer = 0.0_rk
+        gs%brace_side = 0
+        gs%hazard_spawn_timer = 2.0_rk
+        gs%demo_ship_phase = 0.0_rk
         do i = 1, max_enemies
             gs%enemies(i)%active = .false.
         end do
         do i = 1, max_particles
             gs%particles(i)%active = .false.
+        end do
+        do i = 1, max_hazards
+            gs%hazards(i)%active = .false.
         end do
         do i = 1, 5
             call spawn_enemy(gs, 18.0_rk + real(i, rk) * 4.2_rk)
@@ -459,6 +515,9 @@ contains
         gs%danger_timer = max(0.0_rk, gs%danger_timer - dt)
         gs%message_timer = max(0.0_rk, gs%message_timer - dt)
         gs%screen_shake = max(0.0_rk, gs%screen_shake - dt * 1.8_rk)
+        gs%ship_iframe = max(0.0_rk, gs%ship_iframe - dt)
+        gs%hazard_flash = max(0.0_rk, gs%hazard_flash - dt * 2.4_rk)
+        gs%brace_timer = max(0.0_rk, gs%brace_timer - dt)
         if (gs%state == state_play) gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
         gs%sector_palette_timer = max(0.0_rk, gs%sector_palette_timer - dt)
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
@@ -472,9 +531,12 @@ contains
             call update_title_scene(gs, dt)
         case (state_play)
             call update_player_control(gs, dt, width, height, mouse_x, mouse_y, mouse_moved, mouse_buttons)
+            call update_ship_movement(gs, dt)
+            call update_hazards(gs, dt)
             call update_enemies(gs, dt)
             call update_particles(gs, dt)
             call update_spawning(gs, dt)
+            call update_hazard_spawning(gs, dt)
             call update_ambient_audio(gs, dt)
             call update_proximity_audio(gs)
             call update_coil_chatter(gs, dt)
@@ -630,32 +692,28 @@ contains
         real(rk) :: target_x
         real(rk) :: target_y
         real(rk) :: sensitivity
-        logical :: move_right
-        logical :: move_left
-        logical :: move_up
-        logical :: move_down
+        logical :: aim_right
+        logical :: aim_left
+        logical :: aim_up
+        logical :: aim_down
         logical :: precision
         logical :: right_mouse
 
         axis_x = 0.0_rk
         axis_y = 0.0_rk
 
-        move_right = platform_key_down(key_d)
-        if (platform_key_down(key_right)) move_right = .true.
-        move_left = platform_key_down(key_a)
-        if (platform_key_down(key_left)) move_left = .true.
-        move_up = platform_key_down(key_w)
-        if (platform_key_down(key_up)) move_up = .true.
-        move_down = platform_key_down(key_s)
-        if (platform_key_down(key_down)) move_down = .true.
+        aim_right = platform_key_down(key_right)
+        aim_left = platform_key_down(key_left)
+        aim_up = platform_key_down(key_up)
+        aim_down = platform_key_down(key_down)
         right_mouse = iand(mouse_buttons, mouse_button_right) /= 0
         precision = platform_key_down(key_lshift) .or. right_mouse
         gs%precision_aim = precision
 
-        if (move_right) axis_x = axis_x + 1.0_rk
-        if (move_left) axis_x = axis_x - 1.0_rk
-        if (move_up) axis_y = axis_y + 1.0_rk
-        if (move_down) axis_y = axis_y - 1.0_rk
+        if (aim_right) axis_x = axis_x + 1.0_rk
+        if (aim_left) axis_x = axis_x - 1.0_rk
+        if (aim_up) axis_y = axis_y + 1.0_rk
+        if (aim_down) axis_y = axis_y - 1.0_rk
 
         aim_speed = merge(0.72_rk, 1.85_rk, precision)
 
@@ -676,6 +734,248 @@ contains
             gs%reticle_y = clamp(gs%reticle_y, -0.58_rk, 0.58_rk)
         end if
     end subroutine update_player_control
+
+    subroutine update_ship_movement(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk), parameter :: envelope_x = 1.55_rk
+        real(rk), parameter :: envelope_y = 0.95_rk
+        real(rk), parameter :: accel = 18.0_rk
+        real(rk), parameter :: drag = 6.5_rk
+        real(rk), parameter :: max_v = 5.5_rk
+        real(rk) :: axis_x
+        real(rk) :: axis_y
+        logical :: right
+        logical :: left
+        logical :: up
+        logical :: down
+
+        if (gs%demo_mode) return
+
+        right = platform_key_down(key_d)
+        left = platform_key_down(key_a)
+        up = platform_key_down(key_w)
+        down = platform_key_down(key_s)
+
+        axis_x = 0.0_rk
+        axis_y = 0.0_rk
+        if (right) axis_x = axis_x + 1.0_rk
+        if (left) axis_x = axis_x - 1.0_rk
+        if (up) axis_y = axis_y + 1.0_rk
+        if (down) axis_y = axis_y - 1.0_rk
+
+        gs%ship_vx = gs%ship_vx + axis_x * accel * dt
+        gs%ship_vy = gs%ship_vy + axis_y * accel * dt
+        gs%ship_vx = gs%ship_vx - gs%ship_vx * min(1.0_rk, drag * dt)
+        gs%ship_vy = gs%ship_vy - gs%ship_vy * min(1.0_rk, drag * dt)
+        gs%ship_vx = clamp(gs%ship_vx, -max_v, max_v)
+        gs%ship_vy = clamp(gs%ship_vy, -max_v, max_v)
+
+        gs%ship_x = gs%ship_x + gs%ship_vx * dt
+        gs%ship_y = gs%ship_y + gs%ship_vy * dt
+        if (gs%ship_x > envelope_x) then
+            gs%ship_x = envelope_x
+            gs%ship_vx = min(0.0_rk, gs%ship_vx)
+        else if (gs%ship_x < -envelope_x) then
+            gs%ship_x = -envelope_x
+            gs%ship_vx = max(0.0_rk, gs%ship_vx)
+        end if
+        if (gs%ship_y > envelope_y) then
+            gs%ship_y = envelope_y
+            gs%ship_vy = min(0.0_rk, gs%ship_vy)
+        else if (gs%ship_y < -envelope_y) then
+            gs%ship_y = -envelope_y
+            gs%ship_vy = max(0.0_rk, gs%ship_vy)
+        end if
+    end subroutine update_ship_movement
+
+    subroutine update_hazards(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk), parameter :: collide_z_lo = 0.45_rk
+        real(rk), parameter :: collide_z_hi = 1.95_rk
+        real(rk), parameter :: brace_z_hi = 6.0_rk
+        real(rk), parameter :: brace_threshold = 0.85_rk
+        real(rk) :: dx
+        real(rk) :: dy
+        real(rk) :: hit_radius
+        real(rk) :: z_was
+        integer :: i
+        type(vec3) :: pos
+
+        if (gs%state /= state_play) return
+        gs%brace_side = 0
+
+        do i = 1, max_hazards
+            if (.not. gs%hazards(i)%active) cycle
+            z_was = gs%hazards(i)%z
+            gs%hazards(i)%z = gs%hazards(i)%z - gs%hazards(i)%speed * dt
+            gs%hazards(i)%x = gs%hazards(i)%x + gs%hazards(i)%vx * dt
+            gs%hazards(i)%y = gs%hazards(i)%y + gs%hazards(i)%vy * dt
+            gs%hazards(i)%rot = gs%hazards(i)%rot + gs%hazards(i)%rot_speed * dt
+            gs%hazards(i)%tilt = gs%hazards(i)%tilt + gs%hazards(i)%rot_speed * 0.5_rk * dt
+
+            if (gs%hazards(i)%z < -1.5_rk) then
+                gs%hazards(i)%active = .false.
+                cycle
+            end if
+
+            hit_radius = gs%hazards(i)%radius * gs%hazards(i)%scale
+            dx = gs%hazards(i)%x - gs%ship_x
+            dy = gs%hazards(i)%y - gs%ship_y
+
+            if (gs%hazards(i)%z <= brace_z_hi .and. gs%hazards(i)%z > collide_z_hi) then
+                if (abs(dx) < hit_radius + brace_threshold .and. abs(dy) < hit_radius + brace_threshold * 0.7_rk) then
+                    gs%brace_timer = max(gs%brace_timer, 0.25_rk)
+                    if (dx > 0.05_rk) then
+                        gs%brace_side = 1
+                    else if (dx < -0.05_rk) then
+                        gs%brace_side = -1
+                    else
+                        gs%brace_side = 0
+                    end if
+                end if
+            end if
+
+            if (z_was > collide_z_hi .and. gs%hazards(i)%z <= collide_z_hi .and. gs%hazards(i)%z >= collide_z_lo) then
+                if (abs(dx) < hit_radius .and. abs(dy) < hit_radius * 0.82_rk) then
+                    if (gs%ship_iframe <= 0.0_rk) then
+                        pos = vec3(gs%hazards(i)%x, gs%hazards(i)%y, gs%hazards(i)%z)
+                        call hazard_impact(gs, pos, gs%hazards(i)%kind)
+                        gs%ship_iframe = 0.85_rk
+                        gs%ship_vx = gs%ship_vx - sign(3.5_rk, dx)
+                        gs%ship_vy = gs%ship_vy - sign(1.8_rk, dy)
+                    end if
+                    gs%hazards(i)%active = .false.
+                end if
+            end if
+        end do
+    end subroutine update_hazards
+
+    subroutine hazard_impact(gs, pos, kind)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3), intent(in) :: pos
+        integer, intent(in) :: kind
+        integer :: r
+        integer :: g
+        integer :: b
+
+        select case (kind)
+        case (hazard_buoy)
+            r = 140; g = 220; b = 255
+        case (hazard_shard)
+            r = 220; g = 100; b = 220
+        case (hazard_spine)
+            r = 255; g = 160; b = 80
+        case default
+            r = 200; g = 200; b = 255
+        end select
+        call spawn_explosion(gs, pos, 22, r, g, b)
+        gs%hazard_flash = 1.0_rk
+        call player_hit(gs, pos)
+    end subroutine hazard_impact
+
+    subroutine update_hazard_spawning(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk) :: interval
+        real(rk) :: rx
+        real(rk) :: ry
+        real(rk) :: rz
+
+        if (gs%state /= state_play) return
+        if (gs%boss_intro_timer > 0.0_rk) return
+
+        gs%hazard_spawn_timer = gs%hazard_spawn_timer - dt
+        if (gs%hazard_spawn_timer > 0.0_rk) return
+
+        select case (gs%sector)
+        case (1)
+            interval = 2.4_rk
+        case (2)
+            interval = 0.95_rk
+        case (3)
+            interval = 1.7_rk
+        case default
+            interval = 1.5_rk
+        end select
+
+        call random_number(rx)
+        call random_number(ry)
+        call random_number(rz)
+        gs%hazard_spawn_timer = interval * (0.75_rk + 0.5_rk * rx)
+        call spawn_hazard(gs, ry, rz)
+    end subroutine update_hazard_spawning
+
+    subroutine spawn_hazard(gs, rx_in, ry_in)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: rx_in
+        real(rk), intent(in) :: ry_in
+        integer :: slot
+        integer :: i
+        integer :: kind
+        real(rk) :: x_spread
+        real(rk) :: y_spread
+        real(rk) :: rs
+        real(rk) :: rv
+
+        slot = 0
+        do i = 1, max_hazards
+            if (.not. gs%hazards(i)%active) then
+                slot = i
+                exit
+            end if
+        end do
+        if (slot == 0) return
+
+        select case (gs%sector)
+        case (1)
+            kind = hazard_buoy
+            x_spread = 2.2_rk
+            y_spread = 1.10_rk
+        case (2)
+            kind = hazard_shard
+            x_spread = 2.4_rk
+            y_spread = 1.25_rk
+        case (3)
+            kind = hazard_spine
+            x_spread = 2.0_rk
+            y_spread = 0.50_rk
+        case default
+            kind = hazard_shard
+            x_spread = 2.3_rk
+            y_spread = 1.20_rk
+        end select
+
+        call random_number(rs)
+        call random_number(rv)
+
+        gs%hazards(slot)%active = .true.
+        gs%hazards(slot)%kind = kind
+        gs%hazards(slot)%x = (rx_in * 2.0_rk - 1.0_rk) * x_spread
+        gs%hazards(slot)%y = (ry_in * 2.0_rk - 1.0_rk) * y_spread
+        if (kind == hazard_spine) gs%hazards(slot)%y = -0.40_rk + ry_in * 0.25_rk
+        gs%hazards(slot)%z = 34.0_rk + rs * 8.0_rk
+        gs%hazards(slot)%vx = (rv - 0.5_rk) * 0.15_rk
+        gs%hazards(slot)%vy = 0.0_rk
+        gs%hazards(slot)%speed = merge(7.5_rk, 6.2_rk, kind == hazard_shard) + rs * 1.4_rk
+        if (kind == hazard_spine) gs%hazards(slot)%speed = 5.4_rk + rs * 0.8_rk
+        gs%hazards(slot)%rot = rs * 2.0_rk * pi
+        gs%hazards(slot)%rot_speed = (rv * 2.0_rk - 1.0_rk) * 1.6_rk
+        gs%hazards(slot)%tilt = rs * pi
+        select case (kind)
+        case (hazard_buoy)
+            gs%hazards(slot)%scale = 0.55_rk + rs * 0.20_rk
+            gs%hazards(slot)%radius = 0.55_rk
+        case (hazard_shard)
+            gs%hazards(slot)%scale = 0.70_rk + rs * 0.35_rk
+            gs%hazards(slot)%radius = 0.70_rk
+        case (hazard_spine)
+            gs%hazards(slot)%scale = 0.90_rk + rs * 0.30_rk
+            gs%hazards(slot)%radius = 0.60_rk
+            gs%hazards(slot)%rot_speed = 0.0_rk
+        end select
+    end subroutine spawn_hazard
 
     subroutine update_demo_autopilot(gs, dt, width, height)
         type(game_state_t), intent(inout) :: gs
@@ -713,7 +1013,72 @@ contains
             gs%reticle_x = 0.18_rk * sin(gs%time * 0.8_rk) + jitter_x
             gs%reticle_y = 0.12_rk * cos(gs%time * 0.7_rk) + jitter_y
         end if
+
+        call update_demo_ship(gs, dt)
     end subroutine update_demo_autopilot
+
+    subroutine update_demo_ship(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk), parameter :: envelope_x = 1.55_rk
+        real(rk), parameter :: envelope_y = 0.95_rk
+        real(rk) :: target_x
+        real(rk) :: target_y
+        real(rk) :: best_dist
+        real(rk) :: dist
+        real(rk) :: dx
+        real(rk) :: dy
+        integer :: i
+        integer :: threat
+
+        threat = 0
+        best_dist = 8.0_rk
+        do i = 1, max_hazards
+            if (.not. gs%hazards(i)%active) cycle
+            if (gs%hazards(i)%z < 0.6_rk .or. gs%hazards(i)%z > 9.0_rk) cycle
+            dx = gs%hazards(i)%x - gs%ship_x
+            dy = gs%hazards(i)%y - gs%ship_y
+            if (abs(dx) > 2.0_rk .or. abs(dy) > 1.8_rk) cycle
+            dist = gs%hazards(i)%z + abs(dx) * 0.4_rk + abs(dy) * 0.3_rk
+            if (dist < best_dist) then
+                best_dist = dist
+                threat = i
+            end if
+        end do
+
+        gs%demo_ship_phase = gs%demo_ship_phase + dt
+        target_x = 0.85_rk * sin(gs%demo_ship_phase * 0.55_rk)
+        target_y = 0.35_rk * sin(gs%demo_ship_phase * 0.40_rk + 1.2_rk)
+
+        if (threat > 0) then
+            dx = gs%hazards(threat)%x
+            dy = gs%hazards(threat)%y
+            if (dx >= 0.0_rk) then
+                target_x = min(target_x, dx - 1.1_rk)
+            else
+                target_x = max(target_x, dx + 1.1_rk)
+            end if
+            if (abs(gs%hazards(threat)%y) > 0.4_rk) then
+                if (dy >= 0.0_rk) then
+                    target_y = min(target_y, dy - 0.7_rk)
+                else
+                    target_y = max(target_y, dy + 0.7_rk)
+                end if
+            end if
+        end if
+
+        target_x = clamp(target_x, -envelope_x, envelope_x)
+        target_y = clamp(target_y, -envelope_y, envelope_y)
+
+        gs%ship_vx = gs%ship_vx + (target_x - gs%ship_x) * 9.0_rk * dt
+        gs%ship_vy = gs%ship_vy + (target_y - gs%ship_y) * 7.5_rk * dt
+        gs%ship_vx = gs%ship_vx * max(0.0_rk, 1.0_rk - 4.5_rk * dt)
+        gs%ship_vy = gs%ship_vy * max(0.0_rk, 1.0_rk - 4.5_rk * dt)
+        gs%ship_vx = clamp(gs%ship_vx, -5.5_rk, 5.5_rk)
+        gs%ship_vy = clamp(gs%ship_vy, -5.5_rk, 5.5_rk)
+        gs%ship_x = clamp(gs%ship_x + gs%ship_vx * dt, -envelope_x, envelope_x)
+        gs%ship_y = clamp(gs%ship_y + gs%ship_vy * dt, -envelope_y, envelope_y)
+    end subroutine update_demo_ship
 
     subroutine find_demo_target(gs, width, height, index, tx, ty)
         type(game_state_t), intent(in) :: gs
@@ -1806,30 +2171,76 @@ contains
         type(camera3) :: cam
         integer :: line_count
         integer :: i
-        real(rk) :: z
-        real(rk) :: phase
+        integer :: alpha
+        real(rk) :: boost
+        integer :: model_idx
 
         cam = scene_camera(gs)
         line_count = 0
-        phase = modulo(gs%time * 4.3_rk, 16.0_rk)
-        do i = 0, 5
-            z = 8.0_rk + real(i, rk) * 16.0_rk - phase
-            if (z < 3.5_rk) cycle
-            xf%position = vec3(0.0_rk, -0.20_rk, z)
-            xf%rotation = vec3(0.08_rk * sin(gs%time + i), gs%time * 0.08_rk, 0.0_rk)
-            xf%scale = 1.15_rk + 0.08_rk * sin(gs%time + real(i, rk))
-            call append_model_lines(gs%gate_model, xf, cam, width, height, gs%lines, line_count, max_lines, 92, 0.70_rk)
+
+        do i = 1, max_hazards
+            if (.not. gs%hazards(i)%active) cycle
+            xf%position = vec3(gs%hazards(i)%x, gs%hazards(i)%y, gs%hazards(i)%z)
+            xf%rotation = vec3(gs%hazards(i)%tilt, gs%hazards(i)%rot, 0.25_rk * sin(gs%hazards(i)%rot))
+            xf%scale = gs%hazards(i)%scale
+            alpha = max(90, min(255, nint(280.0_rk - gs%hazards(i)%z * 4.2_rk)))
+            boost = 1.0_rk
+            if (gs%hazards(i)%z < 5.0_rk) boost = 1.25_rk
+            model_idx = gs%hazards(i)%kind
+            if (model_idx < 1 .or. model_idx > max_hazard_kinds) model_idx = hazard_shard
+            call append_model_lines(gs%hazard_models(model_idx), xf, cam, width, height, &
+                gs%lines, line_count, max_lines, alpha, boost)
         end do
 
-        if (mod(int(gs%time / 5.0_rk), 2) == 0) then
-            xf%position = vec3(0.0_rk, 0.0_rk, 30.0_rk - modulo(gs%time * 3.0_rk, 24.0_rk))
-            xf%rotation = vec3(0.0_rk, 0.0_rk, gs%time * 0.35_rk)
-            xf%scale = 1.65_rk
-            call append_model_lines(gs%shield_gate_model, xf, cam, width, height, gs%lines, line_count, max_lines, 80, 0.62_rk)
-        end if
-
         call draw_screen_lines(gs%lines, line_count)
+
+        if (gs%brace_timer > 0.0_rk .and. gs%brace_side /= 0) then
+            call render_brace_indicator(gs, width, height)
+        end if
+        if (gs%hazard_flash > 0.0_rk) then
+            call render_impact_edges(gs, width, height)
+        end if
     end subroutine render_environment
+
+    subroutine render_brace_indicator(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer :: alpha
+        integer :: cx
+        integer :: cy
+        integer :: size
+
+        alpha = max(40, min(220, nint(240.0_rk * gs%brace_timer)))
+        cy = height / 2
+        size = max(16, width / 40)
+        if (gs%brace_side > 0) then
+            cx = width - max(30, width / 26)
+            call draw_line_glow(cx, cy - size, cx + size, cy, 255, 120, 60, alpha, 2)
+            call draw_line_glow(cx, cy + size, cx + size, cy, 255, 120, 60, alpha, 2)
+            call draw_line_glow(cx - size / 2, cy, cx + size, cy, 255, 200, 80, alpha, 1)
+        else
+            cx = max(30, width / 26)
+            call draw_line_glow(cx, cy - size, cx - size, cy, 255, 120, 60, alpha, 2)
+            call draw_line_glow(cx, cy + size, cx - size, cy, 255, 120, 60, alpha, 2)
+            call draw_line_glow(cx + size / 2, cy, cx - size, cy, 255, 200, 80, alpha, 1)
+        end if
+    end subroutine render_brace_indicator
+
+    subroutine render_impact_edges(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer :: alpha
+        integer :: inset
+
+        alpha = max(0, min(255, nint(220.0_rk * gs%hazard_flash)))
+        inset = max(4, width / 140)
+        call draw_line_glow(inset, inset, width - inset, inset, 40, 220, 255, alpha, 2)
+        call draw_line_glow(inset, height - inset, width - inset, height - inset, 40, 220, 255, alpha, 2)
+        call draw_line_glow(inset, inset, inset, height - inset, 40, 220, 255, alpha, 2)
+        call draw_line_glow(width - inset, inset, width - inset, height - inset, 40, 220, 255, alpha, 2)
+    end subroutine render_impact_edges
 
     subroutine render_enemies(gs, width, height)
         type(game_state_t), intent(inout) :: gs
@@ -2323,13 +2734,16 @@ contains
     type(camera3) function scene_camera(gs)
         type(game_state_t), intent(in) :: gs
         real(rk) :: shake
+        real(rk) :: iframe_blink
 
         shake = gs%screen_shake
-        scene_camera%position = vec3(0.045_rk * shake * sin(gs%time * 73.0_rk), &
-                                     0.032_rk * shake * cos(gs%time * 59.0_rk), -0.85_rk)
-        scene_camera%yaw = 0.018_rk * shake * sin(gs%time * 47.0_rk)
-        scene_camera%pitch = -0.035_rk + 0.012_rk * shake * cos(gs%time * 53.0_rk)
-        scene_camera%roll = 0.010_rk * shake * sin(gs%time * 61.0_rk)
+        iframe_blink = 0.0_rk
+        if (gs%ship_iframe > 0.0_rk) iframe_blink = 0.015_rk * sin(gs%time * 62.0_rk)
+        scene_camera%position = vec3(gs%ship_x + 0.045_rk * shake * sin(gs%time * 73.0_rk) + iframe_blink, &
+                                     gs%ship_y + 0.032_rk * shake * cos(gs%time * 59.0_rk), -0.85_rk)
+        scene_camera%yaw = 0.018_rk * shake * sin(gs%time * 47.0_rk) + gs%ship_vx * 0.012_rk
+        scene_camera%pitch = -0.035_rk + 0.012_rk * shake * cos(gs%time * 53.0_rk) - gs%ship_vy * 0.010_rk
+        scene_camera%roll = 0.010_rk * shake * sin(gs%time * 61.0_rk) - gs%ship_vx * 0.018_rk
         scene_camera%focal_length = 0.96_rk
         scene_camera%near_z = 0.16_rk
     end function scene_camera

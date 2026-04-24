@@ -31,7 +31,7 @@ Demo/capture modes:
 
 ## Controls
 
-Mouse or `WASD`/arrows aim the reticle — use either, swap any time. Left mouse, `Space`, or `F` fires. Hold `Left Shift` or right mouse for precision aim. `P` pauses. `R` restarts after game over. `F12` captures a screenshot. `Esc` quits. See `docs/CONTROLS.md` for the full list.
+`WASD` steer the ship through drifting hazards. Mouse or arrow keys aim the reticle — independent of ship movement. Left mouse, `Space`, or `F` fires. Hold `Left Shift` or right mouse for precision aim. `P` pauses. `R` restarts after game over. `F12` captures a screenshot. `Esc` quits. See `docs/CONTROLS.md` for the full list.
 
 ## Rendering Pipeline
 

@@ -44,6 +44,11 @@ module model_library
     public :: build_gate_model
     public :: build_shield_gate_model
     public :: build_cube_model
+    public :: build_buoy_model
+    public :: build_shard_model
+    public :: build_spine_model
+    public :: build_rocket_model
+    public :: build_lancer_model
     public :: append_model_lines
 
 contains
@@ -574,6 +579,147 @@ contains
         call set_edge(model, 11, 3, 7, 255, 80, 255)
         call set_edge(model, 12, 4, 8, 255, 80, 255)
     end subroutine build_cube_model
+
+    subroutine build_buoy_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "picket_buoy", 6, 12, 1.1_rk)
+
+        model%vertices = [ &
+            vec3( 1.00_rk,  0.00_rk,  0.00_rk), &
+            vec3(-1.00_rk,  0.00_rk,  0.00_rk), &
+            vec3( 0.00_rk,  1.00_rk,  0.00_rk), &
+            vec3( 0.00_rk, -1.00_rk,  0.00_rk), &
+            vec3( 0.00_rk,  0.00_rk,  1.00_rk), &
+            vec3( 0.00_rk,  0.00_rk, -1.00_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 3, 140, 220, 255)
+        call set_edge(model, 2, 3, 2, 140, 220, 255)
+        call set_edge(model, 3, 2, 4, 140, 220, 255)
+        call set_edge(model, 4, 4, 1, 140, 220, 255)
+        call set_edge(model, 5, 1, 5, 200, 240, 255)
+        call set_edge(model, 6, 3, 5, 200, 240, 255)
+        call set_edge(model, 7, 2, 5, 200, 240, 255)
+        call set_edge(model, 8, 4, 5, 200, 240, 255)
+        call set_edge(model, 9, 1, 6, 80, 160, 220)
+        call set_edge(model, 10, 3, 6, 80, 160, 220)
+        call set_edge(model, 11, 2, 6, 80, 160, 220)
+        call set_edge(model, 12, 4, 6, 80, 160, 220)
+    end subroutine build_buoy_model
+
+    subroutine build_shard_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "asteroid_shard", 6, 12, 1.3_rk)
+
+        model%vertices = [ &
+            vec3( 1.15_rk,  0.22_rk,  0.10_rk), &
+            vec3(-0.90_rk, -0.18_rk,  0.30_rk), &
+            vec3( 0.28_rk,  1.10_rk, -0.22_rk), &
+            vec3(-0.22_rk, -1.18_rk,  0.12_rk), &
+            vec3( 0.18_rk,  0.14_rk,  1.08_rk), &
+            vec3(-0.12_rk,  0.22_rk, -1.22_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 3, 220, 80, 200)
+        call set_edge(model, 2, 3, 2, 200, 100, 220)
+        call set_edge(model, 3, 2, 4, 220, 80, 200)
+        call set_edge(model, 4, 4, 1, 180, 60, 180)
+        call set_edge(model, 5, 1, 5, 255, 140, 220)
+        call set_edge(model, 6, 3, 5, 255, 140, 220)
+        call set_edge(model, 7, 2, 5, 220, 120, 220)
+        call set_edge(model, 8, 4, 5, 220, 120, 220)
+        call set_edge(model, 9, 1, 6, 160, 40, 160)
+        call set_edge(model, 10, 3, 6, 160, 40, 160)
+        call set_edge(model, 11, 2, 6, 140, 30, 140)
+        call set_edge(model, 12, 4, 6, 140, 30, 140)
+    end subroutine build_shard_model
+
+    subroutine build_spine_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "gate_spine", 6, 10, 1.9_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk, -1.20_rk,  0.00_rk), &
+            vec3( 0.00_rk,  2.80_rk,  0.00_rk), &
+            vec3(-0.55_rk, -0.80_rk, -0.25_rk), &
+            vec3( 0.55_rk, -0.80_rk, -0.25_rk), &
+            vec3(-0.28_rk,  1.50_rk, -0.12_rk), &
+            vec3( 0.28_rk,  1.50_rk, -0.12_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 3, 255, 140, 60)
+        call set_edge(model, 2, 1, 4, 255, 140, 60)
+        call set_edge(model, 3, 3, 4, 255, 100, 40)
+        call set_edge(model, 4, 3, 5, 255, 180, 60)
+        call set_edge(model, 5, 4, 6, 255, 180, 60)
+        call set_edge(model, 6, 5, 6, 255, 200, 100)
+        call set_edge(model, 7, 5, 2, 255, 220, 140)
+        call set_edge(model, 8, 6, 2, 255, 220, 140)
+        call set_edge(model, 9, 3, 2, 255, 160, 80)
+        call set_edge(model, 10, 4, 2, 255, 160, 80)
+    end subroutine build_spine_model
+
+    subroutine build_rocket_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "coil_lance", 6, 10, 0.45_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.00_rk,  1.20_rk), &
+            vec3(-0.18_rk,  0.00_rk,  0.30_rk), &
+            vec3( 0.18_rk,  0.00_rk,  0.30_rk), &
+            vec3( 0.00_rk,  0.18_rk,  0.30_rk), &
+            vec3( 0.00_rk, -0.18_rk,  0.30_rk), &
+            vec3( 0.00_rk,  0.00_rk, -0.60_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 255, 120, 60)
+        call set_edge(model, 2, 1, 3, 255, 120, 60)
+        call set_edge(model, 3, 1, 4, 255, 160, 80)
+        call set_edge(model, 4, 1, 5, 255, 160, 80)
+        call set_edge(model, 5, 2, 3, 220, 90, 40)
+        call set_edge(model, 6, 4, 5, 220, 90, 40)
+        call set_edge(model, 7, 2, 6, 255, 200, 120)
+        call set_edge(model, 8, 3, 6, 255, 200, 120)
+        call set_edge(model, 9, 4, 6, 255, 220, 140)
+        call set_edge(model, 10, 5, 6, 255, 220, 140)
+    end subroutine build_rocket_model
+
+    subroutine build_lancer_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "coil_lancer", 9, 14, 1.35_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.00_rk,  1.30_rk), &
+            vec3(-0.55_rk,  0.00_rk,  0.10_rk), &
+            vec3( 0.55_rk,  0.00_rk,  0.10_rk), &
+            vec3( 0.00_rk,  0.38_rk,  0.00_rk), &
+            vec3( 0.00_rk, -0.38_rk,  0.00_rk), &
+            vec3(-0.80_rk,  0.00_rk, -0.85_rk), &
+            vec3( 0.80_rk,  0.00_rk, -0.85_rk), &
+            vec3(-0.80_rk,  0.00_rk, -1.25_rk), &
+            vec3( 0.80_rk,  0.00_rk, -1.25_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 180, 60, 200)
+        call set_edge(model, 2, 1, 3, 180, 60, 200)
+        call set_edge(model, 3, 1, 4, 220, 100, 220)
+        call set_edge(model, 4, 1, 5, 220, 100, 220)
+        call set_edge(model, 5, 2, 4, 160, 50, 180)
+        call set_edge(model, 6, 3, 4, 160, 50, 180)
+        call set_edge(model, 7, 2, 5, 160, 50, 180)
+        call set_edge(model, 8, 3, 5, 160, 50, 180)
+        call set_edge(model, 9, 2, 6, 150, 50, 160)
+        call set_edge(model, 10, 3, 7, 150, 50, 160)
+        call set_edge(model, 11, 6, 8, 255, 60, 40)
+        call set_edge(model, 12, 7, 9, 255, 60, 40)
+        call set_edge(model, 13, 6, 7, 120, 40, 140)
+        call set_edge(model, 14, 8, 9, 200, 60, 60)
+    end subroutine build_lancer_model
 
     subroutine append_model_lines(model, transform, camera, width, height, lines, line_count, max_lines, alpha, color_boost)
         type(wire_model), intent(in) :: model
