@@ -218,6 +218,13 @@ module game
         real(rk) :: hull_pickup_flash = 0.0_rk
         real(rk) :: amber_pickup_flash = 0.0_rk
         real(rk) :: amber_pickup_score = 0.0_rk
+        integer :: streak = 0
+        integer :: max_streak = 0
+        integer :: streak_at_wave_start = 0
+        integer :: streak_milestones = 0
+        real(rk) :: streak_flash = 0.0_rk
+        real(rk) :: streak_break_flash = 0.0_rk
+        real(rk) :: perfect_banner_timer = 0.0_rk
         type(wire_model) :: player_model
         type(wire_model) :: enemy_models(5)
         type(wire_model) :: boss_models(max_sector)
@@ -534,6 +541,13 @@ contains
         gs%hull_pickup_flash = 0.0_rk
         gs%amber_pickup_flash = 0.0_rk
         gs%amber_pickup_score = 0.0_rk
+        gs%streak = 0
+        gs%max_streak = 0
+        gs%streak_at_wave_start = 0
+        gs%streak_milestones = 0
+        gs%streak_flash = 0.0_rk
+        gs%streak_break_flash = 0.0_rk
+        gs%perfect_banner_timer = 0.0_rk
         do i = 1, 5
             call spawn_enemy(gs, 18.0_rk + real(i, rk) * 4.2_rk)
         end do
@@ -586,6 +600,9 @@ contains
         gs%shield_pickup_flash = max(0.0_rk, gs%shield_pickup_flash - dt * 2.0_rk)
         gs%hull_pickup_flash = max(0.0_rk, gs%hull_pickup_flash - dt * 2.0_rk)
         gs%amber_pickup_flash = max(0.0_rk, gs%amber_pickup_flash - dt * 1.6_rk)
+        gs%streak_flash = max(0.0_rk, gs%streak_flash - dt * 2.5_rk)
+        gs%streak_break_flash = max(0.0_rk, gs%streak_break_flash - dt * 1.4_rk)
+        gs%perfect_banner_timer = max(0.0_rk, gs%perfect_banner_timer - dt)
         if (gs%state == state_play) gs%sector_intro_timer = max(0.0_rk, gs%sector_intro_timer - dt)
         gs%sector_palette_timer = max(0.0_rk, gs%sector_palette_timer - dt)
         gs%boss_attack_flash = max(0.0_rk, gs%boss_attack_flash - dt * 5.0_rk)
@@ -2125,7 +2142,8 @@ contains
         if (.not. gs%rockets(index)%active) return
         pos = gs%rockets(index)%position
         gs%rockets(index)%active = .false.
-        gs%score = gs%score + nint(120.0_rk * sector_score_mult(gs%sector))
+        gs%score = gs%score + nint(120.0_rk * sector_score_mult(gs%sector) * streak_multiplier(gs%streak))
+        call add_streak(gs, 1)
         call spawn_explosion(gs, pos, 16, 255, 220, 120)
         gs%message = "LANCE DOWN"
         gs%message_timer = 0.55_rk
@@ -2169,9 +2187,16 @@ contains
                 return
             end if
             gs%score = gs%score + nint(real(100 + gs%wave * 25 + max(0, nint((22.0_rk - pos%z) * 5.0_rk)), rk) &
-                * sector_score_mult(gs%sector) * merge(1.6_rk, 1.0_rk, gs%enemies(index)%variant /= variant_base))
+                * sector_score_mult(gs%sector) &
+                * merge(1.6_rk, 1.0_rk, gs%enemies(index)%variant /= variant_base) &
+                * streak_multiplier(gs%streak))
             gs%kills = gs%kills + 1
             gs%kills_sector_wave = gs%kills_sector_wave + 1
+            if (gs%enemies(index)%variant /= variant_base) then
+                call add_streak(gs, 2)
+            else
+                call add_streak(gs, 1)
+            end if
             if (gs%score > gs%high_score) then
                 gs%high_score = gs%score
                 if (.not. gs%demo_mode) call save_high_score(gs%high_score)
@@ -2214,7 +2239,17 @@ contains
 
     subroutine advance_wave(gs)
         type(game_state_t), intent(inout) :: gs
+        logical :: perfect
 
+        perfect = gs%streak > gs%streak_at_wave_start .and. gs%streak_at_wave_start >= 0
+        if (perfect) then
+            gs%score = gs%score + nint(600.0_rk * sector_score_mult(gs%sector))
+            gs%perfect_banner_timer = 1.8_rk
+            call platform_audio_beep(1050.0, 0.08, 0.16)
+            call platform_audio_beep(1570.0, 0.08, 0.14)
+            call platform_audio_beep(2100.0, 0.10, 0.12)
+        end if
+        gs%streak_at_wave_start = gs%streak
         gs%kills_sector_wave = 0
 
         if (gs%sector_wave >= waves_per_sector) then
@@ -2288,7 +2323,9 @@ contains
 
         call sector_palette_accent(gs%enemies(index)%boss_kind, ar, ag, ab)
         call sector_palette_primary(gs%enemies(index)%boss_kind, pr, pg, pb)
-        gs%score = gs%score + nint(real(1200 + 500 * gs%enemies(index)%boss_kind, rk) * sector_score_mult(gs%sector))
+        gs%score = gs%score + nint(real(1200 + 500 * gs%enemies(index)%boss_kind, rk) &
+            * sector_score_mult(gs%sector) * streak_multiplier(gs%streak))
+        call add_streak(gs, 5)
         if (gs%score > gs%high_score) then
             gs%high_score = gs%score
             if (.not. gs%demo_mode) call save_high_score(gs%high_score)
@@ -2538,6 +2575,7 @@ contains
         type(game_state_t), intent(inout) :: gs
         type(vec3), intent(in) :: pos
 
+        call break_streak(gs)
         call spawn_explosion(gs, pos, 42, 0, 220, 255)
         gs%shield = gs%shield - 0.34_rk
         gs%screen_shake = max(gs%screen_shake, 0.55_rk)
@@ -3237,6 +3275,7 @@ contains
         character(len=32) :: lives_text
         character(len=32) :: high_text
         character(len=32) :: sector_text
+        character(len=32) :: streak_text
         integer :: unit
         integer :: pr
         integer :: pg
@@ -3244,6 +3283,11 @@ contains
         integer :: ar
         integer :: ag
         integer :: ab
+        integer :: streak_y
+        integer :: streak_alpha
+        integer :: sr
+        integer :: sg
+        integer :: sb
 
         unit = max(3, width / 285)
         call blended_palette_primary(gs, pr, pg, pb)
@@ -3261,6 +3305,27 @@ contains
         call draw_text(trim(lives_text), 24, 58 + 7 * unit, unit, 255, 120, 80, 220)
         call draw_text("SHIELD", width - 26 - 17 * 6 * unit, 58 + 7 * unit, unit, pr, pg, pb, 210)
         call draw_meter(width - 26 - 80 * unit / 2, 62 + 15 * unit, 36 * unit, max(8, 3 * unit), real(gs%shield), pr, pg, pb)
+
+        streak_y = 22 + 7 * unit + 6
+        if (gs%streak_break_flash > 0.0_rk) then
+            sr = 255
+            sg = max(40, nint(120.0_rk * (1.0_rk - gs%streak_break_flash)))
+            sb = max(40, nint(120.0_rk * (1.0_rk - gs%streak_break_flash)))
+            streak_alpha = max(140, min(255, nint(180.0_rk + 75.0_rk * gs%streak_break_flash)))
+            call draw_text("STREAK BROKEN", 24, streak_y, unit, sr, sg, sb, streak_alpha)
+        else if (gs%streak > 0) then
+            write(streak_text, '("STREAK x", I0)') gs%streak
+            sr = ar
+            sg = ag
+            sb = ab
+            streak_alpha = 200 + min(55, nint(55.0_rk * gs%streak_flash))
+            call draw_text(trim(streak_text), 24, streak_y, unit, sr, sg, sb, streak_alpha)
+        end if
+
+        if (gs%perfect_banner_timer > 0.0_rk) then
+            call draw_centered_text("PERFECT WAVE", width / 2, height / 4 + 10, max(5, width / 170), &
+                255, 220, 100, max(60, min(255, nint(255.0_rk * min(1.0_rk, gs%perfect_banner_timer)))))
+        end if
 
         if (gs%message_timer > 0.0_rk) then
             call draw_centered_text(trim(gs%message), width / 2, height / 6, max(4, width / 230), 255, 255, 120, &
@@ -3509,6 +3574,44 @@ contains
         end select
         scale = scale + max(0.0_rk, min(0.16_rk, (22.0_rk - z) * 0.007_rk))
     end function boss_scale
+
+    pure real(rk) function streak_multiplier(streak) result(mult)
+        integer, intent(in) :: streak
+        mult = 1.0_rk + 0.10_rk * real(streak, rk)
+        if (mult > 4.0_rk) mult = 4.0_rk
+    end function streak_multiplier
+
+    subroutine add_streak(gs, increment)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: increment
+        integer :: milestone_bit
+        integer, parameter :: milestones(4) = [10, 25, 50, 100]
+        integer :: i
+
+        gs%streak = gs%streak + increment
+        if (gs%streak > gs%max_streak) gs%max_streak = gs%streak
+        gs%streak_flash = 1.0_rk
+
+        do i = 1, size(milestones)
+            if (gs%streak >= milestones(i)) then
+                milestone_bit = ishft(1, i - 1)
+                if (iand(gs%streak_milestones, milestone_bit) == 0) then
+                    gs%streak_milestones = ior(gs%streak_milestones, milestone_bit)
+                    call platform_audio_beep(880.0, 0.06, 0.14)
+                    call platform_audio_beep(1320.0, 0.06, 0.12)
+                    call platform_audio_beep(1760.0, 0.08, 0.10)
+                end if
+            end if
+        end do
+    end subroutine add_streak
+
+    subroutine break_streak(gs)
+        type(game_state_t), intent(inout) :: gs
+        if (gs%streak > 0) then
+            gs%streak_break_flash = 1.0_rk
+        end if
+        gs%streak = 0
+    end subroutine break_streak
 
     pure logical function phantom_visible(enemy, time) result(visible)
         type(enemy_t), intent(in) :: enemy
