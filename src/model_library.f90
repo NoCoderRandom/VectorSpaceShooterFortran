@@ -1,5 +1,5 @@
 module model_library
-    use vector_math, only: rk, vec2, vec3, transform3, camera3, apply_transform, project_point
+    use vector_math, only: rk, vec2, vec3, transform3, camera3, apply_transform, project_point, pi
     implicit none
     private
 
@@ -41,6 +41,12 @@ module model_library
     public :: build_harrower_model
     public :: build_seer_model
     public :: build_maw_model
+    public :: build_boneforge_model
+    public :: build_stormveil_model
+    public :: build_maw_core_model
+    public :: build_wreck_model
+    public :: build_arc_model
+    public :: build_lattice_model
     public :: build_gate_model
     public :: build_shield_gate_model
     public :: build_cube_model
@@ -722,6 +728,208 @@ contains
         call set_edge(model, 13, 6, 7, 120, 40, 140)
         call set_edge(model, 14, 8, 9, 200, 60, 60)
     end subroutine build_lancer_model
+
+    subroutine build_wreck_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "hull_wreck", 10, 16, 2.2_rk)
+
+        model%vertices = [ &
+            vec3(-1.30_rk, -0.95_rk,  1.40_rk), &
+            vec3( 1.40_rk, -0.85_rk,  1.20_rk), &
+            vec3( 1.70_rk,  0.90_rk, -0.10_rk), &
+            vec3(-0.80_rk,  1.10_rk,  0.30_rk), &
+            vec3(-1.50_rk,  0.10_rk, -1.20_rk), &
+            vec3( 1.10_rk,  0.20_rk, -1.60_rk), &
+            vec3(-0.20_rk, -1.10_rk, -0.60_rk), &
+            vec3( 0.30_rk,  0.40_rk,  0.50_rk), &
+            vec3(-0.60_rk, -0.40_rk,  0.80_rk), &
+            vec3( 0.80_rk, -0.20_rk, -0.70_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 200, 110, 60)
+        call set_edge(model, 2, 2, 3, 200, 110, 60)
+        call set_edge(model, 3, 3, 4, 200, 110, 60)
+        call set_edge(model, 4, 4, 1, 200, 110, 60)
+        call set_edge(model, 5, 1, 5, 160, 90, 50)
+        call set_edge(model, 6, 2, 6, 160, 90, 50)
+        call set_edge(model, 7, 3, 6, 160, 90, 50)
+        call set_edge(model, 8, 4, 5, 160, 90, 50)
+        call set_edge(model, 9, 5, 7, 120, 70, 40)
+        call set_edge(model, 10, 6, 7, 120, 70, 40)
+        call set_edge(model, 11, 1, 9, 180, 100, 60)
+        call set_edge(model, 12, 2, 10, 180, 100, 60)
+        call set_edge(model, 13, 8, 9, 220, 140, 90)
+        call set_edge(model, 14, 8, 10, 220, 140, 90)
+        call set_edge(model, 15, 5, 6, 90, 60, 40)
+        call set_edge(model, 16, 7, 8, 100, 70, 50)
+    end subroutine build_wreck_model
+
+    subroutine build_arc_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "void_arc", 6, 8, 3.0_rk)
+
+        model%vertices = [ &
+            vec3(-2.50_rk,  0.00_rk,  0.00_rk), &
+            vec3(-1.20_rk,  0.25_rk,  0.10_rk), &
+            vec3( 0.10_rk, -0.20_rk, -0.12_rk), &
+            vec3( 1.20_rk,  0.18_rk,  0.08_rk), &
+            vec3( 2.50_rk, -0.05_rk,  0.00_rk), &
+            vec3( 0.00_rk,  0.00_rk,  0.00_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 220, 240, 255)
+        call set_edge(model, 2, 2, 3, 220, 240, 255)
+        call set_edge(model, 3, 3, 4, 220, 240, 255)
+        call set_edge(model, 4, 4, 5, 220, 240, 255)
+        call set_edge(model, 5, 1, 6, 120, 200, 255)
+        call set_edge(model, 6, 5, 6, 120, 200, 255)
+        call set_edge(model, 7, 2, 6, 160, 220, 255)
+        call set_edge(model, 8, 4, 6, 160, 220, 255)
+    end subroutine build_arc_model
+
+    subroutine build_lattice_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "coil_lattice", 8, 12, 1.3_rk)
+
+        model%vertices = [ &
+            vec3(-1.20_rk, -0.60_rk,  0.80_rk), &
+            vec3( 1.20_rk, -0.60_rk,  0.80_rk), &
+            vec3( 1.20_rk,  0.60_rk,  0.80_rk), &
+            vec3(-1.20_rk,  0.60_rk,  0.80_rk), &
+            vec3(-1.20_rk, -0.60_rk, -0.80_rk), &
+            vec3( 1.20_rk, -0.60_rk, -0.80_rk), &
+            vec3( 1.20_rk,  0.60_rk, -0.80_rk), &
+            vec3(-1.20_rk,  0.60_rk, -0.80_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 200, 50, 50)
+        call set_edge(model, 2, 3, 4, 200, 50, 50)
+        call set_edge(model, 3, 5, 6, 180, 40, 40)
+        call set_edge(model, 4, 7, 8, 180, 40, 40)
+        call set_edge(model, 5, 1, 5, 220, 60, 60)
+        call set_edge(model, 6, 2, 6, 220, 60, 60)
+        call set_edge(model, 7, 3, 7, 220, 60, 60)
+        call set_edge(model, 8, 4, 8, 220, 60, 60)
+        call set_edge(model, 9, 1, 4, 140, 30, 30)
+        call set_edge(model, 10, 2, 3, 140, 30, 30)
+        call set_edge(model, 11, 5, 8, 120, 30, 30)
+        call set_edge(model, 12, 6, 7, 120, 30, 30)
+    end subroutine build_lattice_model
+
+    subroutine build_boneforge_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "boneforge", 11, 18, 2.9_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.00_rk,  1.80_rk), &
+            vec3(-1.80_rk,  0.90_rk,  0.20_rk), &
+            vec3( 1.80_rk,  0.90_rk,  0.20_rk), &
+            vec3(-1.80_rk, -0.90_rk,  0.20_rk), &
+            vec3( 1.80_rk, -0.90_rk,  0.20_rk), &
+            vec3( 0.00_rk,  1.80_rk, -0.20_rk), &
+            vec3( 0.00_rk, -1.80_rk, -0.20_rk), &
+            vec3(-1.20_rk,  0.00_rk, -1.60_rk), &
+            vec3( 1.20_rk,  0.00_rk, -1.60_rk), &
+            vec3( 0.00_rk,  0.00_rk, -2.20_rk), &
+            vec3( 0.00_rk,  0.00_rk,  0.00_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 255, 180, 60)
+        call set_edge(model, 2, 1, 3, 255, 180, 60)
+        call set_edge(model, 3, 1, 4, 255, 180, 60)
+        call set_edge(model, 4, 1, 5, 255, 180, 60)
+        call set_edge(model, 5, 2, 6, 220, 140, 40)
+        call set_edge(model, 6, 3, 6, 220, 140, 40)
+        call set_edge(model, 7, 4, 7, 220, 140, 40)
+        call set_edge(model, 8, 5, 7, 220, 140, 40)
+        call set_edge(model, 9, 2, 4, 180, 100, 40)
+        call set_edge(model, 10, 3, 5, 180, 100, 40)
+        call set_edge(model, 11, 2, 8, 160, 80, 40)
+        call set_edge(model, 12, 4, 8, 160, 80, 40)
+        call set_edge(model, 13, 3, 9, 160, 80, 40)
+        call set_edge(model, 14, 5, 9, 160, 80, 40)
+        call set_edge(model, 15, 8, 10, 120, 60, 30)
+        call set_edge(model, 16, 9, 10, 120, 60, 30)
+        call set_edge(model, 17, 11, 6, 255, 220, 100)
+        call set_edge(model, 18, 11, 7, 255, 220, 100)
+    end subroutine build_boneforge_model
+
+    subroutine build_stormveil_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "stormveil", 8, 14, 2.4_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  2.20_rk,  0.00_rk), &
+            vec3( 0.00_rk, -2.20_rk,  0.00_rk), &
+            vec3( 0.00_rk,  0.00_rk,  1.20_rk), &
+            vec3( 0.00_rk,  0.00_rk, -1.20_rk), &
+            vec3(-0.85_rk,  1.10_rk, -0.10_rk), &
+            vec3( 0.85_rk,  1.10_rk, -0.10_rk), &
+            vec3(-0.85_rk, -1.10_rk, -0.10_rk), &
+            vec3( 0.85_rk, -1.10_rk, -0.10_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 3, 220, 240, 255)
+        call set_edge(model, 2, 1, 4, 220, 240, 255)
+        call set_edge(model, 3, 2, 3, 220, 240, 255)
+        call set_edge(model, 4, 2, 4, 220, 240, 255)
+        call set_edge(model, 5, 1, 5, 180, 220, 255)
+        call set_edge(model, 6, 1, 6, 180, 220, 255)
+        call set_edge(model, 7, 2, 7, 180, 220, 255)
+        call set_edge(model, 8, 2, 8, 180, 220, 255)
+        call set_edge(model, 9, 3, 5, 255, 255, 255)
+        call set_edge(model, 10, 3, 6, 255, 255, 255)
+        call set_edge(model, 11, 4, 7, 140, 180, 220)
+        call set_edge(model, 12, 4, 8, 140, 180, 220)
+        call set_edge(model, 13, 5, 7, 120, 160, 200)
+        call set_edge(model, 14, 6, 8, 120, 160, 200)
+    end subroutine build_stormveil_model
+
+    subroutine build_maw_core_model(model)
+        type(wire_model), intent(out) :: model
+        integer :: i
+        integer :: edge_idx
+        real(rk) :: angle
+        real(rk) :: r_outer
+        real(rk) :: r_mid
+
+        call allocate_model(model, "maw_core", 13, 24, 3.0_rk)
+
+        r_outer = 2.10_rk
+        r_mid = 1.30_rk
+        model%vertices(1) = vec3(0.0_rk, 0.0_rk, 0.0_rk)
+        do i = 0, 5
+            angle = real(i, rk) * pi / 3.0_rk
+            model%vertices(2 + i) = vec3(r_outer * cos(angle), r_outer * sin(angle), 0.0_rk)
+        end do
+        do i = 0, 5
+            angle = real(i, rk) * pi / 3.0_rk + pi / 6.0_rk
+            model%vertices(8 + i) = vec3(r_mid * cos(angle), r_mid * sin(angle), -0.35_rk)
+        end do
+
+        edge_idx = 0
+        do i = 0, 5
+            edge_idx = edge_idx + 1
+            call set_edge(model, edge_idx, 2 + i, 2 + mod(i + 1, 6), 255, 60, 40)
+        end do
+        do i = 0, 5
+            edge_idx = edge_idx + 1
+            call set_edge(model, edge_idx, 8 + i, 8 + mod(i + 1, 6), 220, 80, 80)
+        end do
+        do i = 0, 5
+            edge_idx = edge_idx + 1
+            call set_edge(model, edge_idx, 2 + i, 8 + i, 180, 50, 50)
+        end do
+        do i = 0, 5
+            edge_idx = edge_idx + 1
+            call set_edge(model, edge_idx, 8 + i, 1, 255, 140, 80)
+        end do
+    end subroutine build_maw_core_model
 
     subroutine build_cage_model(model)
         type(wire_model), intent(out) :: model

@@ -11,7 +11,10 @@ module game
         build_hunter_model, build_skimmer_model, build_striker_model, build_warden_model, &
         build_harrower_model, build_seer_model, build_maw_model, build_shield_gate_model, &
         build_buoy_model, build_shard_model, build_spine_model, &
-        build_rocket_model, build_lancer_model, build_pickup_model, build_cage_model, append_model_lines
+        build_rocket_model, build_lancer_model, build_pickup_model, build_cage_model, &
+        build_wreck_model, build_arc_model, build_lattice_model, &
+        build_boneforge_model, build_stormveil_model, build_maw_core_model, &
+        append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
     implicit none
@@ -35,7 +38,7 @@ module game
     integer, parameter :: max_particles = 720
     integer, parameter :: max_lines = 4096
     integer, parameter :: max_hazards = 32
-    integer, parameter :: max_hazard_kinds = 3
+    integer, parameter :: max_hazard_kinds = 6
     integer, parameter :: max_rockets = 8
     integer, parameter :: pattern_lancer = 6
     integer, parameter :: max_shards = 20
@@ -55,9 +58,17 @@ module game
     integer, parameter :: hazard_buoy = 1
     integer, parameter :: hazard_shard = 2
     integer, parameter :: hazard_spine = 3
+    integer, parameter :: hazard_wreck = 4
+    integer, parameter :: hazard_arc = 5
+    integer, parameter :: hazard_lattice = 6
 
     integer, parameter :: waves_per_sector = 3
-    integer, parameter :: max_sector = 3
+    integer, parameter :: max_sector = 6
+
+    integer, parameter :: storm_dark = 0
+    integer, parameter :: storm_preflash = 1
+    integer, parameter :: storm_flash = 2
+    integer, parameter :: storm_afterglow = 3
 
     character(len=*), parameter :: high_score_path = "highscore.dat"
 
@@ -416,11 +427,17 @@ contains
         call build_harrower_model(gs%boss_models(1))
         call build_seer_model(gs%boss_models(2))
         call build_maw_model(gs%boss_models(3))
+        call build_boneforge_model(gs%boss_models(4))
+        call build_stormveil_model(gs%boss_models(5))
+        call build_maw_core_model(gs%boss_models(6))
         call build_gate_model(gs%gate_model)
         call build_shield_gate_model(gs%shield_gate_model)
         call build_buoy_model(gs%hazard_models(hazard_buoy))
         call build_shard_model(gs%hazard_models(hazard_shard))
         call build_spine_model(gs%hazard_models(hazard_spine))
+        call build_wreck_model(gs%hazard_models(hazard_wreck))
+        call build_arc_model(gs%hazard_models(hazard_arc))
+        call build_lattice_model(gs%hazard_models(hazard_lattice))
         call build_rocket_model(gs%rocket_model)
         call build_lancer_model(gs%lancer_model)
         call build_pickup_model(gs%pickup_models(shard_shield), 80, 220, 255)
@@ -1417,6 +1434,12 @@ contains
             interval = 0.95_rk
         case (3)
             interval = 1.7_rk
+        case (4)
+            interval = 1.1_rk
+        case (5)
+            interval = 1.6_rk
+        case (6)
+            interval = 0.70_rk
         case default
             interval = 1.5_rk
         end select
@@ -1462,6 +1485,18 @@ contains
             kind = hazard_spine
             x_spread = 2.0_rk
             y_spread = 0.50_rk
+        case (4)
+            kind = hazard_wreck
+            x_spread = 2.6_rk
+            y_spread = 1.40_rk
+        case (5)
+            kind = hazard_arc
+            x_spread = 2.4_rk
+            y_spread = 1.20_rk
+        case (6)
+            kind = hazard_lattice
+            x_spread = 2.1_rk
+            y_spread = 1.00_rk
         case default
             kind = hazard_shard
             x_spread = 2.3_rk
@@ -1495,6 +1530,22 @@ contains
             gs%hazards(slot)%scale = 0.90_rk + rs * 0.30_rk
             gs%hazards(slot)%radius = 0.60_rk
             gs%hazards(slot)%rot_speed = 0.0_rk
+        case (hazard_wreck)
+            gs%hazards(slot)%scale = 1.00_rk + rs * 0.50_rk
+            gs%hazards(slot)%radius = 1.05_rk
+            gs%hazards(slot)%rot_speed = (rv * 2.0_rk - 1.0_rk) * 0.7_rk
+            gs%hazards(slot)%speed = 4.8_rk + rs * 1.0_rk
+        case (hazard_arc)
+            gs%hazards(slot)%scale = 0.90_rk + rs * 0.40_rk
+            gs%hazards(slot)%radius = 0.80_rk
+            gs%hazards(slot)%rot_speed = 0.0_rk
+            gs%hazards(slot)%speed = 7.0_rk + rs * 1.6_rk
+            if (rv > 0.5_rk) gs%hazards(slot)%tilt = pi / 2.0_rk
+        case (hazard_lattice)
+            gs%hazards(slot)%scale = 0.85_rk + rs * 0.30_rk
+            gs%hazards(slot)%radius = 0.75_rk
+            gs%hazards(slot)%rot_speed = (rv * 2.0_rk - 1.0_rk) * 0.8_rk
+            gs%hazards(slot)%speed = 8.5_rk + rs * 1.2_rk
         end select
     end subroutine spawn_hazard
 
@@ -1781,9 +1832,18 @@ contains
         case (2)
             freq = 82.0_rk
             volume = 0.014_rk + 0.008_rk * (0.5_rk + 0.5_rk * sin(gs%time * 2.0_rk * pi * 4.0_rk))
-        case default
+        case (3)
             freq = 92.0_rk
             volume = 0.020_rk
+        case (4)
+            freq = 74.0_rk
+            volume = 0.017_rk
+        case (5)
+            freq = 58.0_rk
+            volume = 0.012_rk
+        case default
+            freq = 68.0_rk
+            volume = 0.024_rk
         end select
         if (gs%boss_fight) volume = volume + 0.008_rk
         call platform_audio_beep(real(freq), 0.34, real(volume))
@@ -2233,7 +2293,10 @@ contains
         select case (sector)
         case (1); mult = 1.0_rk
         case (2); mult = 1.5_rk
-        case default; mult = 2.0_rk
+        case (3); mult = 2.0_rk
+        case (4); mult = 2.4_rk
+        case (5); mult = 2.8_rk
+        case default; mult = 3.2_rk
         end select
     end function sector_score_mult
 
@@ -2425,7 +2488,10 @@ contains
         select case (sector)
         case (1); name = "SECTOR I - OUTER PICKET"
         case (2); name = "SECTOR II - ASTEROID LANE"
-        case default; name = "SECTOR III - STRONGHOLD"
+        case (3); name = "SECTOR III - STRONGHOLD"
+        case (4); name = "SECTOR IV - GRAVEYARD"
+        case (5); name = "SECTOR V - VOID STORM"
+        case default; name = "SECTOR VI - HIVE APPROACH"
         end select
     end function sector_name
 
@@ -2437,7 +2503,10 @@ contains
         select case (sector)
         case (1); r = 0;   g = 200; b = 255
         case (2); r = 210; g = 110; b = 255
-        case default; r = 255; g = 130; b = 60
+        case (3); r = 255; g = 130; b = 60
+        case (4); r = 220; g = 130; b = 60
+        case (5); r = 180; g = 220; b = 255
+        case default; r = 255; g = 60; b = 50
         end select
     end subroutine sector_palette_primary
 
@@ -2449,7 +2518,10 @@ contains
         select case (sector)
         case (1); r = 255; g = 220; b = 90
         case (2); r = 120; g = 255; b = 200
-        case default; r = 255; g = 240; b = 110
+        case (3); r = 255; g = 240; b = 110
+        case (4); r = 255; g = 180; b = 80
+        case (5); r = 255; g = 255; b = 255
+        case default; r = 255; g = 200; b = 120
         end select
     end subroutine sector_palette_accent
 
@@ -2461,7 +2533,10 @@ contains
         select case (sector)
         case (1); r = 0;   g = 80;  b = 120
         case (2); r = 80;  g = 30;  b = 110
-        case default; r = 110; g = 50; b = 20
+        case (3); r = 110; g = 50;  b = 20
+        case (4); r = 90;  g = 50;  b = 25
+        case (5); r = 30;  g = 40;  b = 60
+        case default; r = 90;  g = 20;  b = 20
         end select
     end subroutine sector_palette_dim
 
@@ -2549,7 +2624,10 @@ contains
         select case (sector)
         case (1); name = "HARROWER"
         case (2); name = "SEER"
-        case default; name = "THE MAW"
+        case (3); name = "THE MAW"
+        case (4); name = "BONEFORGE"
+        case (5); name = "STORMVEIL"
+        case default; name = "THE MAW CORE"
         end select
     end function boss_name
 
@@ -2558,7 +2636,10 @@ contains
         select case (sector)
         case (1); hp = 16
         case (2); hp = 20
-        case default; hp = 26
+        case (3); hp = 26
+        case (4); hp = 30
+        case (5); hp = 28
+        case default; hp = 36
         end select
     end function boss_hp
 
@@ -2567,7 +2648,10 @@ contains
         select case (sector)
         case (1); z = 15.5_rk
         case (2); z = 14.8_rk
-        case default; z = 14.0_rk
+        case (3); z = 14.0_rk
+        case (4); z = 13.5_rk
+        case (5); z = 14.5_rk
+        case default; z = 13.0_rk
         end select
     end function boss_hold_z
 
