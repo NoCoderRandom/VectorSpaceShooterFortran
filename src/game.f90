@@ -36,6 +36,8 @@ module game
     integer, parameter :: max_lines = 4096
     integer, parameter :: max_hazards = 32
     integer, parameter :: max_hazard_kinds = 3
+    integer, parameter :: max_rockets = 8
+    integer, parameter :: pattern_lancer = 6
 
     integer, parameter :: particle_spark = 1
     integer, parameter :: particle_ring = 2
@@ -72,12 +74,23 @@ module game
         real(rk) :: age = 0.0_rk
         real(rk) :: phase = 0.0_rk
         real(rk) :: flash = 0.0_rk
+        real(rk) :: fire_timer = 0.0_rk
         integer :: pattern = 1
         integer :: hp = 1
         integer :: hp_max = 1
         logical :: is_boss = .false.
         integer :: boss_kind = 0
     end type enemy_t
+
+    type :: rocket_t
+        logical :: active = .false.
+        type(vec3) :: position = vec3(0.0_rk, 0.0_rk, 0.0_rk)
+        type(vec3) :: velocity = vec3(0.0_rk, 0.0_rk, -6.0_rk)
+        real(rk) :: age = 0.0_rk
+        real(rk) :: lifetime = 5.0_rk
+        real(rk) :: speed = 7.0_rk
+        real(rk) :: trail_phase = 0.0_rk
+    end type rocket_t
 
     type :: particle_t
         logical :: active = .false.
@@ -172,6 +185,10 @@ module game
         type(enemy_t) :: enemies(max_enemies)
         type(particle_t) :: particles(max_particles)
         type(hazard_t) :: hazards(max_hazards)
+        type(rocket_t) :: rockets(max_rockets)
+        real(rk) :: lancer_spawn_timer = 0.0_rk
+        real(rk) :: klaxon_timer = 0.0_rk
+        real(rk) :: rocket_warning_dir = 0.0_rk
         type(wire_model) :: player_model
         type(wire_model) :: enemy_models(5)
         type(wire_model) :: boss_models(max_sector)
@@ -469,6 +486,12 @@ contains
         do i = 1, max_hazards
             gs%hazards(i)%active = .false.
         end do
+        do i = 1, max_rockets
+            gs%rockets(i)%active = .false.
+        end do
+        gs%lancer_spawn_timer = 6.0_rk
+        gs%klaxon_timer = 0.0_rk
+        gs%rocket_warning_dir = 0.0_rk
         do i = 1, 5
             call spawn_enemy(gs, 18.0_rk + real(i, rk) * 4.2_rk)
         end do
@@ -534,11 +557,15 @@ contains
             call update_ship_movement(gs, dt)
             call update_hazards(gs, dt)
             call update_enemies(gs, dt)
+            call update_lancer_fire(gs, dt)
+            call update_rockets(gs, dt)
             call update_particles(gs, dt)
             call update_spawning(gs, dt)
             call update_hazard_spawning(gs, dt)
+            call update_lancer_spawning(gs, dt)
             call update_ambient_audio(gs, dt)
             call update_proximity_audio(gs)
+            call update_rocket_audio(gs, dt)
             call update_coil_chatter(gs, dt)
             call update_boss_attack(gs, dt)
             call update_demo_autopilot(gs, dt, width, height)
@@ -875,6 +902,262 @@ contains
         call player_hit(gs, pos)
     end subroutine hazard_impact
 
+    subroutine update_lancer_spawning(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        integer :: i
+        integer :: lancer_count
+        integer :: cap
+        real(rk) :: interval
+        real(rk) :: rx
+        real(rk) :: ry
+        real(rk) :: rs
+
+        if (gs%state /= state_play) return
+        if (gs%boss_fight .or. gs%boss_intro_timer > 0.0_rk) return
+        if (gs%wave < 2 .and. gs%sector == 1) return
+
+        lancer_count = 0
+        do i = 1, max_enemies
+            if (gs%enemies(i)%active .and. gs%enemies(i)%pattern == pattern_lancer) lancer_count = lancer_count + 1
+        end do
+
+        if (gs%sector <= 2) then
+            cap = 2
+        else
+            cap = 3
+        end if
+        if (lancer_count >= cap) return
+
+        gs%lancer_spawn_timer = gs%lancer_spawn_timer - dt
+        if (gs%lancer_spawn_timer > 0.0_rk) return
+
+        interval = merge(9.0_rk, 6.5_rk, gs%sector <= 2)
+        call random_number(rx)
+        gs%lancer_spawn_timer = interval + rx * 3.0_rk
+
+        call random_number(ry)
+        call random_number(rs)
+        call spawn_lancer(gs, ry, rs)
+    end subroutine update_lancer_spawning
+
+    subroutine spawn_lancer(gs, rx_in, rs_in)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: rx_in
+        real(rk), intent(in) :: rs_in
+        integer :: slot
+        integer :: i
+        real(rk) :: sign
+
+        slot = 0
+        do i = 1, max_enemies
+            if (.not. gs%enemies(i)%active) then
+                slot = i
+                exit
+            end if
+        end do
+        if (slot == 0) return
+
+        sign = merge(1.0_rk, -1.0_rk, rx_in > 0.5_rk)
+        gs%spawn_serial = gs%spawn_serial + 1
+
+        gs%enemies(slot)%active = .true.
+        gs%enemies(slot)%pattern = pattern_lancer
+        gs%enemies(slot)%age = 0.0_rk
+        gs%enemies(slot)%phase = rs_in * 2.0_rk * pi
+        gs%enemies(slot)%flash = 0.0_rk
+        gs%enemies(slot)%hp = 2
+        gs%enemies(slot)%hp_max = 2
+        gs%enemies(slot)%is_boss = .false.
+        gs%enemies(slot)%boss_kind = 0
+        gs%enemies(slot)%x = sign * (1.6_rk + rx_in * 0.8_rk)
+        gs%enemies(slot)%y = (rs_in - 0.5_rk) * 1.4_rk
+        gs%enemies(slot)%z = 14.0_rk + rs_in * 4.0_rk
+        gs%enemies(slot)%vx = -sign * 0.25_rk
+        gs%enemies(slot)%vy = 0.0_rk
+        gs%enemies(slot)%speed = 0.75_rk + rs_in * 0.45_rk
+        gs%enemies(slot)%fire_timer = 2.6_rk + rx_in * 1.4_rk
+    end subroutine spawn_lancer
+
+    subroutine update_lancer_fire(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        integer :: i
+        integer :: rockets_in_flight
+        integer :: cap
+        type(vec3) :: lancer_pos
+        real(rk) :: reload
+
+        if (gs%state /= state_play) return
+
+        rockets_in_flight = 0
+        do i = 1, max_rockets
+            if (gs%rockets(i)%active) rockets_in_flight = rockets_in_flight + 1
+        end do
+        if (gs%sector <= 2) then
+            cap = 3
+        else
+            cap = 5
+        end if
+
+        do i = 1, max_enemies
+            if (.not. gs%enemies(i)%active) cycle
+            if (gs%enemies(i)%pattern /= pattern_lancer) cycle
+            if (gs%enemies(i)%is_boss) cycle
+            gs%enemies(i)%fire_timer = gs%enemies(i)%fire_timer - dt
+            if (gs%enemies(i)%fire_timer > 0.0_rk) cycle
+            if (rockets_in_flight >= cap) then
+                gs%enemies(i)%fire_timer = 0.6_rk
+                cycle
+            end if
+
+            lancer_pos = enemy_position(gs%enemies(i))
+            call spawn_rocket(gs, lancer_pos)
+            rockets_in_flight = rockets_in_flight + 1
+            reload = merge(3.6_rk, 2.8_rk, gs%sector <= 2)
+            call random_number(reload)
+            gs%enemies(i)%fire_timer = merge(3.6_rk, 2.6_rk, gs%sector <= 2) + reload * 1.4_rk
+        end do
+    end subroutine update_lancer_fire
+
+    subroutine spawn_rocket(gs, origin)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3), intent(in) :: origin
+        integer :: slot
+        integer :: i
+        real(rk) :: dx
+        real(rk) :: dy
+        real(rk) :: dz
+        real(rk) :: speed0
+
+        slot = 0
+        do i = 1, max_rockets
+            if (.not. gs%rockets(i)%active) then
+                slot = i
+                exit
+            end if
+        end do
+        if (slot == 0) return
+
+        dx = gs%ship_x - origin%x
+        dy = gs%ship_y - origin%y
+        dz = -origin%z
+        speed0 = 5.6_rk
+
+        gs%rockets(slot)%active = .true.
+        gs%rockets(slot)%position = origin
+        gs%rockets(slot)%age = 0.0_rk
+        gs%rockets(slot)%lifetime = 4.2_rk
+        gs%rockets(slot)%speed = speed0
+        gs%rockets(slot)%trail_phase = 0.0_rk
+        gs%rockets(slot)%velocity = scale3(vec3(dx, dy, dz), speed0 / max(0.1_rk, sqrt(dx * dx + dy * dy + dz * dz)))
+
+        call platform_audio_beep(190.0, 0.05, 0.09)
+        call platform_audio_noise(1400.0, 0.10, 0.06, 2.2)
+    end subroutine spawn_rocket
+
+    subroutine update_rockets(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk), parameter :: turn_rate = 2.6_rk
+        real(rk), parameter :: hit_radius = 0.75_rk
+        real(rk) :: dx
+        real(rk) :: dy
+        real(rk) :: dz
+        real(rk) :: inv
+        real(rk) :: vx_new
+        real(rk) :: vy_new
+        real(rk) :: vz_new
+        real(rk) :: speed_mag
+        type(vec3) :: target
+        integer :: i
+
+        if (gs%state /= state_play) return
+
+        do i = 1, max_rockets
+            if (.not. gs%rockets(i)%active) cycle
+            gs%rockets(i)%age = gs%rockets(i)%age + dt
+            gs%rockets(i)%trail_phase = gs%rockets(i)%trail_phase + dt
+            if (gs%rockets(i)%age > gs%rockets(i)%lifetime) then
+                gs%rockets(i)%active = .false.
+                cycle
+            end if
+
+            target = vec3(gs%ship_x, gs%ship_y, 0.0_rk)
+            dx = target%x - gs%rockets(i)%position%x
+            dy = target%y - gs%rockets(i)%position%y
+            dz = target%z - gs%rockets(i)%position%z
+            inv = 1.0_rk / max(0.1_rk, sqrt(dx * dx + dy * dy + dz * dz))
+
+            vx_new = gs%rockets(i)%velocity%x + dx * inv * turn_rate * dt
+            vy_new = gs%rockets(i)%velocity%y + dy * inv * turn_rate * dt
+            vz_new = gs%rockets(i)%velocity%z + dz * inv * turn_rate * dt
+            speed_mag = sqrt(vx_new * vx_new + vy_new * vy_new + vz_new * vz_new)
+            if (speed_mag > 0.0_rk) then
+                gs%rockets(i)%velocity%x = vx_new / speed_mag * gs%rockets(i)%speed
+                gs%rockets(i)%velocity%y = vy_new / speed_mag * gs%rockets(i)%speed
+                gs%rockets(i)%velocity%z = vz_new / speed_mag * gs%rockets(i)%speed
+            end if
+
+            gs%rockets(i)%position = add3(gs%rockets(i)%position, scale3(gs%rockets(i)%velocity, dt))
+
+            if (gs%rockets(i)%position%z < 1.3_rk) then
+                dx = gs%rockets(i)%position%x - gs%ship_x
+                dy = gs%rockets(i)%position%y - gs%ship_y
+                if (sqrt(dx * dx + dy * dy) < hit_radius .and. gs%rockets(i)%position%z > -0.8_rk) then
+                    if (gs%ship_iframe <= 0.0_rk) then
+                        call spawn_explosion(gs, gs%rockets(i)%position, 28, 255, 120, 60)
+                        gs%ship_iframe = 0.7_rk
+                        call player_hit(gs, gs%rockets(i)%position)
+                    end if
+                    gs%rockets(i)%active = .false.
+                    cycle
+                end if
+                if (gs%rockets(i)%position%z < -1.2_rk) then
+                    gs%rockets(i)%active = .false.
+                end if
+            end if
+        end do
+    end subroutine update_rockets
+
+    subroutine update_rocket_audio(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        integer :: i
+        real(rk) :: nearest_z
+        real(rk) :: nearest_dir
+        real(rk) :: pitch
+        real(rk) :: interval
+
+        if (gs%state /= state_play) return
+
+        nearest_z = huge(1.0_rk)
+        nearest_dir = 0.0_rk
+        do i = 1, max_rockets
+            if (.not. gs%rockets(i)%active) cycle
+            if (gs%rockets(i)%position%z < nearest_z) then
+                nearest_z = gs%rockets(i)%position%z
+                nearest_dir = gs%rockets(i)%position%x - gs%ship_x
+            end if
+        end do
+
+        if (nearest_z > 12.0_rk) then
+            gs%klaxon_timer = 0.0_rk
+            gs%rocket_warning_dir = 0.0_rk
+            return
+        end if
+
+        gs%rocket_warning_dir = nearest_dir
+
+        gs%klaxon_timer = gs%klaxon_timer - dt
+        if (gs%klaxon_timer > 0.0_rk) return
+
+        pitch = 380.0_rk + (12.0_rk - max(0.0_rk, nearest_z)) * 55.0_rk
+        interval = merge(0.16_rk, 0.30_rk, nearest_z < 5.0_rk)
+        gs%klaxon_timer = interval
+        call platform_audio_beep(real(pitch), 0.040, 0.080)
+    end subroutine update_rocket_audio
+
     subroutine update_hazard_spawning(gs, dt)
         type(game_state_t), intent(inout) :: gs
         real(rk), intent(in) :: dt
@@ -1100,6 +1383,16 @@ contains
         ty = 0.0_rk
         best_z = huge(1.0_rk)
         cam = scene_camera(gs)
+        do i = 1, max_rockets
+            if (.not. gs%rockets(i)%active) cycle
+            if (gs%rockets(i)%position%z < 1.5_rk) cycle
+            if (gs%rockets(i)%position%z >= best_z) cycle
+            if (.not. project_point(gs%rockets(i)%position, cam, width, height, screen, depth, scale_px)) cycle
+            index = -i
+            best_z = gs%rockets(i)%position%z
+            tx = clamp((screen%x - 0.5_rk * real(width, rk)) / (0.42_rk * real(width, rk)), -0.88_rk, 0.88_rk)
+            ty = clamp((0.5_rk * real(height, rk) - screen%y) / (0.38_rk * real(height, rk)), -0.68_rk, 0.68_rk)
+        end do
         do i = 1, max_enemies
             if (.not. gs%enemies(i)%active) cycle
             pos = enemy_position(gs%enemies(i))
@@ -1462,6 +1755,10 @@ contains
             dive = max(0.0_rk, 1.0_rk - enemy%z / 18.0_rk)
             enemy_position%y = enemy_position%y + enemy%vy * enemy%age * (0.35_rk + dive)
             enemy_position%x = enemy_position%x + 0.18_rk * sin(enemy%age * 1.9_rk + enemy%phase)
+        case (pattern_lancer)
+            enemy_position%x = enemy_position%x + enemy%vx * enemy%age * 0.85_rk &
+                + 0.55_rk * sin(enemy%age * 1.3_rk + enemy%phase)
+            enemy_position%y = enemy_position%y + 0.28_rk * sin(enemy%age * 1.0_rk + enemy%phase)
         case default
             orbit_r = 1.0_rk + 0.25_rk * sin(enemy%age * 1.5_rk)
             orbit_w = enemy%age * 2.4_rk + enemy%phase
@@ -1477,6 +1774,9 @@ contains
         type(vec2) :: screen
         real(rk) :: radius_px
         integer :: best
+        integer :: rocket_index
+        type(vec2) :: rocket_screen
+        real(rk) :: rocket_dist
         logical :: in_damage_range
         real(rk) :: shot_pitch
         real(rk) :: detune
@@ -1502,6 +1802,15 @@ contains
         call platform_audio_beep(real(shot_pitch), 0.045, merge(0.13, 0.16, gs%precision_aim))
         call platform_audio_beep(real(shot_pitch * 1.46_rk), 0.024, merge(0.055, 0.075, gs%precision_aim))
 
+        call find_rocket_target(gs, width, height, rocket_index, rocket_screen, rocket_dist)
+        if (rocket_index > 0) then
+            gs%laser_target_locked = .true.
+            gs%laser_target_x = rocket_screen%x
+            gs%laser_target_y = rocket_screen%y
+            call intercept_rocket(gs, rocket_index)
+            return
+        end if
+
         call find_lock_target(gs, width, height, best, screen, radius_px, in_damage_range)
         if (best > 0) then
             gs%laser_target_locked = .true.
@@ -1513,6 +1822,70 @@ contains
             call damage_enemy(gs, best)
         end if
     end subroutine fire_weapon
+
+    subroutine find_rocket_target(gs, width, height, index, screen_out, best_dist)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer, intent(out) :: index
+        type(vec2), intent(out) :: screen_out
+        real(rk), intent(out) :: best_dist
+        type(camera3) :: cam
+        type(vec2) :: screen
+        real(rk) :: depth
+        real(rk) :: rx
+        real(rk) :: ry
+        real(rk) :: dx
+        real(rk) :: dy
+        real(rk) :: dist
+        real(rk) :: radius
+        integer :: i
+        logical :: ok
+
+        index = 0
+        best_dist = huge(1.0_rk)
+        screen_out = vec2(0.0_rk, 0.0_rk)
+
+        cam = scene_camera(gs)
+        rx = 0.5_rk * real(width, rk) + gs%reticle_x * 0.42_rk * real(width, rk)
+        ry = 0.5_rk * real(height, rk) - gs%reticle_y * 0.38_rk * real(height, rk)
+        radius = merge(46.0_rk, 62.0_rk, gs%precision_aim) * max(1.0_rk, real(width, rk) / 1280.0_rk)
+
+        do i = 1, max_rockets
+            if (.not. gs%rockets(i)%active) cycle
+            if (gs%rockets(i)%position%z < 0.4_rk) cycle
+            ok = project_point(gs%rockets(i)%position, cam, width, height, screen, depth)
+            if (.not. ok) cycle
+            dx = screen%x - rx
+            dy = screen%y - ry
+            dist = sqrt(dx * dx + dy * dy)
+            if (dist < radius .and. dist < best_dist) then
+                best_dist = dist
+                index = i
+                screen_out = screen
+            end if
+        end do
+    end subroutine find_rocket_target
+
+    subroutine intercept_rocket(gs, index)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: index
+        type(vec3) :: pos
+
+        if (.not. gs%rockets(index)%active) return
+        pos = gs%rockets(index)%position
+        gs%rockets(index)%active = .false.
+        gs%score = gs%score + nint(120.0_rk * sector_score_mult(gs%sector))
+        call spawn_explosion(gs, pos, 16, 255, 220, 120)
+        gs%message = "LANCE DOWN"
+        gs%message_timer = 0.55_rk
+        call platform_audio_beep(860.0, 0.05, 0.14)
+        call platform_audio_beep(1320.0, 0.04, 0.10)
+        if (gs%score > gs%high_score) then
+            gs%high_score = gs%score
+            if (.not. gs%demo_mode) call save_high_score(gs%high_score)
+        end if
+    end subroutine intercept_rocket
 
     subroutine damage_enemy(gs, index)
         type(game_state_t), intent(inout) :: gs
@@ -2050,6 +2423,7 @@ contains
             call render_environment(gs, width, height)
             call render_particles(gs, width, height)
             call render_enemies(gs, width, height)
+            call render_rockets(gs, width, height)
             call render_boss_attack(gs, width, height)
         end if
 
@@ -2058,6 +2432,7 @@ contains
             call render_title(gs, width, height)
         case (state_play)
             call render_lock_on(gs, width, height)
+            call render_rocket_warning(gs, width, height)
             call render_cockpit(gs, width, height)
             call render_sector_intro(gs, width, height)
             call render_hud(gs, width, height)
@@ -2270,6 +2645,16 @@ contains
                 boost = merge(2.6_rk, 1.15_rk, gs%enemies(i)%flash > 0.0_rk)
                 alpha = max(170, min(255, nint(320.0_rk - pos%z * 3.0_rk)))
                 call append_model_lines(gs%boss_models(boss_kind), xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+            else if (gs%enemies(i)%pattern == pattern_lancer) then
+                xf%rotation = vec3(0.10_rk * sin(gs%enemies(i)%age * 0.9_rk), &
+                                   gs%enemies(i)%age * 0.30_rk + gs%enemies(i)%phase, &
+                                   0.06_rk * sin(gs%enemies(i)%age * 1.6_rk))
+                xf%scale = enemy_scale(pos%z) * 1.15_rk
+                boost = merge(2.25_rk, 1.0_rk, gs%enemies(i)%flash > 0.0_rk)
+                if (gs%enemies(i)%fire_timer < 0.6_rk .and. gs%enemies(i)%fire_timer > 0.0_rk) &
+                    boost = boost + 0.6_rk * (0.6_rk - gs%enemies(i)%fire_timer)
+                alpha = max(110, min(255, nint(290.0_rk - pos%z * 3.2_rk)))
+                call append_model_lines(gs%lancer_model, xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
             else
                 xf%rotation = vec3(0.22_rk * sin(gs%enemies(i)%age), &
                                    gs%enemies(i)%age * 0.55_rk + gs%enemies(i)%phase, &
@@ -2283,6 +2668,79 @@ contains
 
         call draw_screen_lines(gs%lines, line_count)
     end subroutine render_enemies
+
+    subroutine render_rockets(gs, width, height)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        type(transform3) :: xf
+        type(camera3) :: cam
+        type(vec2) :: s1
+        type(vec2) :: s2
+        type(vec3) :: tail
+        real(rk) :: d1
+        real(rk) :: d2
+        real(rk) :: yaw
+        real(rk) :: pitch
+        real(rk) :: boost
+        integer :: line_count
+        integer :: alpha
+        integer :: i
+        logical :: ok1
+        logical :: ok2
+
+        cam = scene_camera(gs)
+        line_count = 0
+        do i = 1, max_rockets
+            if (.not. gs%rockets(i)%active) cycle
+            yaw = atan2(gs%rockets(i)%velocity%x, -gs%rockets(i)%velocity%z)
+            pitch = atan2(gs%rockets(i)%velocity%y, sqrt(gs%rockets(i)%velocity%x**2 + gs%rockets(i)%velocity%z**2))
+            xf%position = gs%rockets(i)%position
+            xf%rotation = vec3(-pitch, yaw, gs%rockets(i)%trail_phase * 6.0_rk)
+            xf%scale = 1.0_rk
+            boost = 1.2_rk + 0.35_rk * (0.5_rk + 0.5_rk * sin(gs%rockets(i)%trail_phase * 22.0_rk))
+            alpha = max(150, min(255, nint(300.0_rk - gs%rockets(i)%position%z * 4.0_rk)))
+            call append_model_lines(gs%rocket_model, xf, cam, width, height, &
+                gs%lines, line_count, max_lines, alpha, boost)
+
+            tail = add3(gs%rockets(i)%position, scale3(gs%rockets(i)%velocity, -0.12_rk))
+            ok1 = project_point(gs%rockets(i)%position, cam, width, height, s1, d1)
+            ok2 = project_point(tail, cam, width, height, s2, d2)
+            if (ok1 .and. ok2) then
+                call draw_line_glow(nint(s1%x), nint(s1%y), nint(s2%x), nint(s2%y), &
+                    255, 220, 140, alpha, 2)
+            end if
+        end do
+        call draw_screen_lines(gs%lines, line_count)
+    end subroutine render_rockets
+
+    subroutine render_rocket_warning(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer :: alpha
+        integer :: inset
+        integer :: cx
+        integer :: cy
+        integer :: size
+
+        if (abs(gs%rocket_warning_dir) < 0.01_rk) return
+        alpha = 180
+        inset = max(6, width / 90)
+        cy = height / 3
+        size = max(18, width / 36)
+        if (gs%rocket_warning_dir > 0.0_rk) then
+            cx = width - inset - size
+            call draw_line_glow(cx, cy - size, cx + size, cy, 255, 80, 60, alpha, 2)
+            call draw_line_glow(cx, cy + size, cx + size, cy, 255, 80, 60, alpha, 2)
+            call draw_line_glow(cx - size / 3, cy, cx + size, cy, 255, 200, 80, alpha, 1)
+        else
+            cx = inset + size
+            call draw_line_glow(cx, cy - size, cx - size, cy, 255, 80, 60, alpha, 2)
+            call draw_line_glow(cx, cy + size, cx - size, cy, 255, 80, 60, alpha, 2)
+            call draw_line_glow(cx + size / 3, cy, cx - size, cy, 255, 200, 80, alpha, 1)
+        end if
+    end subroutine render_rocket_warning
 
     subroutine render_boss_attack(gs, width, height)
         type(game_state_t), intent(in) :: gs
