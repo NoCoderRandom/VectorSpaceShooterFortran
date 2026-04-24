@@ -5,7 +5,7 @@ module game
         platform_ticks, platform_delay, platform_get_draw_size, platform_begin_frame, platform_present, &
         platform_audio_beep, platform_audio_noise, platform_save_screenshot, platform_vsync_active, platform_mouse_state, &
         mouse_button_left, mouse_button_right, &
-        key_a, key_d, key_f, key_p, key_r, key_s, key_w, &
+        key_a, key_b, key_d, key_f, key_p, key_r, key_s, key_w, &
         key_return, key_escape, key_space, key_f12, key_right, key_left, key_down, key_up, key_lshift
     use model_library, only: wire_model, screen_line, build_player_model, build_enemy_model, build_gate_model, &
         build_hunter_model, build_skimmer_model, build_striker_model, build_warden_model, &
@@ -25,6 +25,7 @@ module game
     integer, parameter :: state_game_over = 2
     integer, parameter :: state_victory = 3
     integer, parameter :: state_transmission = 4
+    integer, parameter :: state_finale_choice = 5
 
     integer, parameter :: tx_none = 0
     integer, parameter :: tx_opening = 1
@@ -32,6 +33,12 @@ module game
     integer, parameter :: tx_sector_three = 3
     integer, parameter :: tx_victory = 4
     integer, parameter :: tx_defeat = 5
+    integer, parameter :: tx_ending_close = 6
+    integer, parameter :: tx_ending_hold = 7
+
+    integer, parameter :: ending_none = 0
+    integer, parameter :: ending_close = 1
+    integer, parameter :: ending_hold = 2
 
     integer, parameter :: max_stars = 220
     integer, parameter :: max_enemies = 48
@@ -222,6 +229,9 @@ module game
         integer :: comm_events_fired = 0
         integer :: last_comm_sector = 0
         integer :: last_comm_boss_sector = 0
+        integer :: finale_choice_hover = 1
+        real(rk) :: finale_idle_time = 0.0_rk
+        integer :: last_ending = ending_none
         integer :: transmission_id = tx_none
         integer :: transmission_next_state = state_play
         integer :: transmission_visible_lines = 0
@@ -352,6 +362,24 @@ contains
             if (gs%state == state_transmission) then
                 if ((fire_pressed .and. .not. prev_fire) .or. (start_pressed .and. .not. prev_start)) then
                     call continue_transmission(gs)
+                end if
+            end if
+
+            if (gs%state == state_finale_choice) then
+                block
+                    logical :: fc_left
+                    logical :: fc_right
+                    fc_left = platform_key_down(key_left)
+                    if (platform_key_down(key_a)) fc_left = .true.
+                    fc_right = platform_key_down(key_right)
+                    if (platform_key_down(key_d)) fc_right = .true.
+                    if (platform_key_down(key_b)) fc_right = .true.
+                    if (fc_left) gs%finale_choice_hover = 1
+                    if (fc_right) gs%finale_choice_hover = 2
+                end block
+                if ((start_pressed .and. .not. prev_start) .or. &
+                    (fire_pressed .and. .not. prev_fire)) then
+                    call commit_finale_choice(gs)
                 end if
             end if
 
@@ -689,6 +717,8 @@ contains
             call update_particles(gs, dt)
         case (state_transmission)
             call update_transmission(gs, dt)
+        case (state_finale_choice)
+            gs%finale_idle_time = gs%finale_idle_time + dt
         end select
     end subroutine update_game
 
@@ -2516,7 +2546,11 @@ contains
             if (gs%demo_mode) then
                 gs%state = state_victory
             else
-                call start_transmission(gs, tx_victory, state_victory)
+                gs%state = state_finale_choice
+                gs%finale_choice_hover = 1
+                gs%finale_idle_time = 0.0_rk
+                gs%message = ""
+                gs%message_timer = 0.0_rk
             end if
             return
         end if
@@ -2926,6 +2960,10 @@ contains
             call render_victory(gs, width, height)
         case (state_transmission)
             call render_transmission(gs, width, height)
+        case (state_finale_choice)
+            call render_cockpit(gs, width, height)
+            call render_hud(gs, width, height)
+            call render_finale_choice(gs, width, height)
         end select
     end subroutine render_game
 
@@ -3736,6 +3774,54 @@ contains
         call draw_centered_text("PRESS R OR ENTER", width / 2, y0 + small * 44, small, ar, ag, ab, 220)
     end subroutine render_victory
 
+    subroutine render_finale_choice(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer :: y0
+        integer :: unit
+        integer :: big
+        integer :: close_alpha
+        integer :: hold_alpha
+        integer :: close_r
+        integer :: close_g
+        integer :: close_b
+        integer :: hold_r
+        integer :: hold_g
+        integer :: hold_b
+        integer :: ar
+        integer :: ag
+        integer :: ab
+
+        call blended_palette_accent(gs, ar, ag, ab)
+
+        unit = max(3, width / 260)
+        big = max(5, width / 170)
+        y0 = height / 6
+
+        call draw_centered_text(">> PILOT 77. YOU DECIDE", width / 2, y0, unit, 255, 240, 140, 235)
+        call draw_centered_text("THE MAW CORE IS BROKEN", width / 2, y0 + unit * 9, unit, ar, ag, ab, 200)
+
+        if (gs%finale_choice_hover == 1) then
+            close_r = 255; close_g = 90; close_b = 90
+            close_alpha = 255
+            hold_r = 160; hold_g = 160; hold_b = 180
+            hold_alpha = 180
+        else
+            close_r = 160; close_g = 160; close_b = 180
+            close_alpha = 180
+            hold_r = 120; hold_g = 220; hold_b = 255
+            hold_alpha = 255
+        end if
+
+        call draw_centered_text("[A] CLOSE GATE - SACRIFICE", width / 2, y0 + big * 10, big, &
+            close_r, close_g, close_b, close_alpha)
+        call draw_centered_text("[B] HOLD GATE - WAIT FOR SOL", width / 2, y0 + big * 16, big, &
+            hold_r, hold_g, hold_b, hold_alpha)
+        call draw_centered_text("A/B OR LEFT/RIGHT, THEN ENTER", width / 2, y0 + big * 24, unit, &
+            ar, ag, ab, 200)
+    end subroutine render_finale_choice
+
     type(camera3) function scene_camera(gs)
         type(game_state_t), intent(in) :: gs
         real(rk) :: shake
@@ -3768,6 +3854,23 @@ contains
         end select
         scale = scale + max(0.0_rk, min(0.16_rk, (22.0_rk - z) * 0.007_rk))
     end function boss_scale
+
+    subroutine commit_finale_choice(gs)
+        type(game_state_t), intent(inout) :: gs
+
+        if (gs%finale_choice_hover == 1) then
+            gs%last_ending = ending_close
+            call start_transmission(gs, tx_ending_close, state_victory)
+            call platform_audio_beep(80.0, 0.40, 0.22)
+            call platform_audio_beep(55.0, 0.55, 0.18)
+        else
+            gs%last_ending = ending_hold
+            call start_transmission(gs, tx_ending_hold, state_victory)
+            call platform_audio_beep(440.0, 0.18, 0.16)
+            call platform_audio_beep(660.0, 0.22, 0.14)
+            call platform_audio_beep(880.0, 0.30, 0.12)
+        end if
+    end subroutine commit_finale_choice
 
     subroutine trigger_comm(gs, wingmate, line)
         type(game_state_t), intent(inout) :: gs
@@ -3922,7 +4025,7 @@ contains
     pure integer function transmission_line_count(transmission_id) result(line_count)
         integer, intent(in) :: transmission_id
         select case (transmission_id)
-        case (tx_opening, tx_sector_two, tx_sector_three, tx_victory)
+        case (tx_opening, tx_sector_two, tx_sector_three, tx_victory, tx_ending_close, tx_ending_hold)
             line_count = 4
         case (tx_defeat)
             line_count = 3
@@ -3971,6 +4074,20 @@ contains
             case (1); line = ">> PHOSPHOR SIGNAL LOST"
             case (2); line = ">> COIL ADVANCING ON SOL"
             case (3); line = ">> STAND BY FOR NEXT PILOT"
+            end select
+        case (tx_ending_close)
+            select case (line_index)
+            case (1); line = ">> GATE COLLAPSED FROM THE INSIDE"
+            case (2); line = ">> PHOSPHOR-LEAD SIGNAL LOST"
+            case (3); line = ">> KESTREL: HE TOOK IT WITH HIM"
+            case (4); line = ">> SOL REMEMBERS 77"
+            end select
+        case (tx_ending_hold)
+            select case (line_index)
+            case (1); line = ">> GATE HELD. SOL ARRIVED"
+            case (2); line = ">> KESTREL: WE WAITED. HE WAITED LONGER"
+            case (3); line = ">> PHOSPHOR-LEAD CAME HOME"
+            case (4); line = ">> THE COIL FELL SILENT THAT DAY"
             end select
         end select
     end function transmission_line

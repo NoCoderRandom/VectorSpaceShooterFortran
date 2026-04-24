@@ -4,6 +4,7 @@ module platform
     private
 
     integer, parameter, public :: key_a = 4
+    integer, parameter, public :: key_b = 5
     integer, parameter, public :: key_d = 7
     integer, parameter, public :: key_f = 9
     integer, parameter, public :: key_p = 19
