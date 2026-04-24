@@ -11,20 +11,20 @@ sudo apt-get update
 sudo apt-get install -y build-essential gfortran gcc pkg-config libsdl2-dev
 ```
 
-`fpm.toml` is included for project metadata, but the reliable build path is `scripts/build.sh` because it uses `pkg-config` for SDL2.
+`fpm.toml` is included for project metadata, but the reliable build path is `./build.sh` because it uses `pkg-config` for SDL2.
 
 ## Build And Run
 
 ```bash
-./scripts/build.sh
-./scripts/run.sh
+./build.sh
+./run.sh
 ```
 
 Demo/capture modes:
 
 ```bash
-./scripts/run.sh --demo
-./scripts/run.sh --screenshot
+./run.sh --demo
+./run.sh --screenshot
 ```
 
 `--screenshot` saves `capture.bmp` after a scripted showcase warmup. In-game, press `F12` to save `capture.bmp`.
@@ -53,11 +53,11 @@ The game includes a title screen with persistent high score, playable crosshair-
 ## Tests
 
 ```bash
-./scripts/test.sh
+./test.sh
 ```
 
 Tests cover projection safety, transforms, and the model-to-screen-line pipeline.
 
 ## Layout
 
-`app/` contains the executable entry point. `src/` contains Fortran game/math/rendering modules plus the small SDL2 wrapper. `test/` contains focused Fortran tests. `docs/` has architecture and control notes. `scripts/` contains build/run/test helpers.
+`app/` contains the executable entry point. `src/` contains Fortran game/math/rendering modules plus the small SDL2 wrapper. `test/` contains focused Fortran tests. `docs/` has architecture and control notes. `build.sh`, `run.sh`, and `test.sh` at the repo root are the build/run/test helpers.

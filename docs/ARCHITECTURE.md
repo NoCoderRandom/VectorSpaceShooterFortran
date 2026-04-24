@@ -36,4 +36,4 @@ Each frame clears to black, then draws stars, depth grid, environment gates, deb
 
 ## Known Limitations
 
-Audio is intentionally synthetic and minimal. The SDL wrapper uses line drawing rather than platform-specific GPU geometry. The vector HUD font is a 5x7 cell font rendered as short horizontal strokes rather than true vector glyph outlines. `fpm.toml` is present as metadata, but `scripts/build.sh` is the supported SDL2 build path because it handles `pkg-config` reliably. High scores persist to `highscore.dat` in the current working directory; deleting that file resets the record.
+Audio is intentionally synthetic and minimal. The SDL wrapper uses line drawing rather than platform-specific GPU geometry. The vector HUD font is a 5x7 cell font rendered as short horizontal strokes rather than true vector glyph outlines. `fpm.toml` is present as metadata, but `./build.sh` is the supported SDL2 build path because it handles `pkg-config` reliably. High scores persist to `highscore.dat` in the current working directory; deleting that file resets the record.

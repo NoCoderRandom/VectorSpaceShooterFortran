@@ -6,3 +6,5 @@ highscore.dat
 *.o
 *.a
 *.so
+fortran_vector3d_arcade_prompt_pack/
+.codex

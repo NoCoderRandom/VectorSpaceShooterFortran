@@ -26,4 +26,4 @@ The OS cursor is hidden while the game is running — the in-game reticle is you
 
 ## Demo Mode
 
-Run `./scripts/run.sh --demo` for a fast-starting curated demo. It immediately enters play, tracks targets automatically, fires with a quick cadence, and shows the visual hook without waiting on title-screen input.
+Run `./run.sh --demo` for a fast-starting curated demo. It immediately enters play, tracks targets automatically, fires with a quick cadence, and shows the visual hook without waiting on title-screen input.
