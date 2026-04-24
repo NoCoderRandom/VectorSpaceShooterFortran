@@ -48,7 +48,19 @@ The render path is explicit and CPU-side:
 
 ## Current Slice
 
-The game includes a title screen with persistent high score, playable crosshair-aim combat, 5 enemy motion archetypes (straight, weave, lateral sweep, dive-bomber, orbiter) unlocked across the first waves, wave pacing, hit detection, score/lives/shield/high HUD, vector explosions, screen shake, simple SDL audio tones, a naturalized demo autopilot, and screenshot capture. Frame pacing is driven by SDL's VSYNC when available and falls back to a 60 Hz sleep otherwise.
+Six-sector campaign with a branching finale. The Mk-77 steers independently from the reticle, so you dodge hazards with `WASD` while aiming with mouse or arrow keys.
+
+Mechanics:
+- Six sectors, each with a distinct palette and signature hazard (Picket Buoys, Asteroid Shards, Gate Spines, Wrecks, Void Arcs, Hive Lattice).
+- Six bosses (Harrower, Seer, The Maw, Boneforge, Stormveil, Maw Core), each multi-phase with attack-cadence escalation and a "PHASE" banner on transitions.
+- Rocket enemies (Lancers) fire tracking Lances you shoot down or evade.
+- Elite variants: Juggernaut (shielded Hunter, breaks with one hit), Phantom (flickering Skimmer, only hittable during the visible pulse).
+- Lattice shards drop from kills: cyan restores shield, green restores hull, amber is pure score.
+- Combo streak scoring with multiplier up to 4.0x, perfect-wave bonus, and HUD readout.
+- Wingmate comms ([K] Kestrel, [V] Vane, [E] Ember) react to Lances, Wrecks, low shield, and sector entry.
+- Two endings: close the gate (sacrifice) or hold it (return home).
+
+Vector-style rendering on a black background with bright colored lines. Frame pacing is driven by SDL's VSYNC when available and falls back to a 60 Hz sleep otherwise.
 
 ## Tests
 
