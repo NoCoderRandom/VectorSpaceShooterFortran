@@ -14,7 +14,7 @@ module game
         build_rocket_model, build_lancer_model, build_pickup_model, build_cage_model, &
         build_wreck_model, build_arc_model, build_lattice_model, &
         build_boneforge_model, build_stormveil_model, build_maw_core_model, &
-        append_model_lines
+        build_scrapwight_model, append_model_lines
     use vector_renderer, only: draw_line_glow, draw_screen_lines, draw_box, draw_reticle, draw_meter
     use vector_font, only: draw_text, draw_centered_text
     implicit none
@@ -48,6 +48,7 @@ module game
     integer, parameter :: max_hazard_kinds = 6
     integer, parameter :: max_rockets = 8
     integer, parameter :: pattern_lancer = 6
+    integer, parameter :: pattern_scrapwight = 7
     integer, parameter :: max_shards = 20
     integer, parameter :: shard_shield = 1
     integer, parameter :: shard_hull = 2
@@ -78,6 +79,7 @@ module game
     integer, parameter :: storm_afterglow = 3
 
     character(len=*), parameter :: high_score_path = "highscore.dat"
+    character(len=*), parameter :: ending_path = "ending.dat"
 
     real(rk), parameter :: target_fps = 60.0_rk
 
@@ -163,6 +165,7 @@ module game
         real(rk) :: scale = 1.0_rk
         real(rk) :: radius = 1.0_rk
         integer :: kind = hazard_buoy
+        integer :: spawn_count = 0
     end type hazard_t
 
     type :: game_state_t
@@ -232,6 +235,12 @@ module game
         integer :: finale_choice_hover = 1
         real(rk) :: finale_idle_time = 0.0_rk
         integer :: last_ending = ending_none
+        integer :: storm_phase = storm_dark
+        real(rk) :: storm_phase_timer = 2.5_rk
+        logical :: storm_flash_fired = .false.
+        integer :: loss_seq = 0
+        real(rk) :: loss_seq_timer = 0.0_rk
+        real(rk) :: boss_lance_timer = 0.0_rk
         integer :: transmission_id = tx_none
         integer :: transmission_next_state = state_play
         integer :: transmission_visible_lines = 0
@@ -269,6 +278,7 @@ module game
         type(wire_model) :: lancer_model
         type(wire_model) :: pickup_models(max_shard_kinds)
         type(wire_model) :: cage_model
+        type(wire_model) :: scrapwight_model
         type(screen_line) :: lines(max_lines)
     end type game_state_t
 
@@ -485,8 +495,10 @@ contains
         call build_pickup_model(gs%pickup_models(shard_hull), 120, 255, 140)
         call build_pickup_model(gs%pickup_models(shard_amber), 255, 200, 80)
         call build_cage_model(gs%cage_model)
+        call build_scrapwight_model(gs%scrapwight_model)
         call init_stars(gs)
         gs%high_score = load_high_score()
+        gs%last_ending = load_last_ending()
         gs%demo_mode = demo_mode
         gs%state = merge(state_play, state_title, demo_mode)
     end subroutine init_game
@@ -514,6 +526,30 @@ contains
         write(unit_no, '(i0)') value
         close(unit_no)
     end subroutine save_high_score
+
+    integer function load_last_ending() result(e)
+        integer :: unit_no
+        integer :: ios
+        integer :: value
+
+        e = ending_none
+        open(newunit=unit_no, file=ending_path, status="old", action="read", iostat=ios)
+        if (ios /= 0) return
+        read(unit_no, *, iostat=ios) value
+        close(unit_no)
+        if (ios == 0 .and. value >= ending_none .and. value <= ending_hold) e = value
+    end function load_last_ending
+
+    subroutine save_last_ending(value)
+        integer, intent(in) :: value
+        integer :: unit_no
+        integer :: ios
+
+        open(newunit=unit_no, file=ending_path, status="replace", action="write", iostat=ios)
+        if (ios /= 0) return
+        write(unit_no, '(i0)') value
+        close(unit_no)
+    end subroutine save_last_ending
 
     subroutine reset_play(gs, demo_mode)
         type(game_state_t), intent(inout) :: gs
@@ -567,6 +603,12 @@ contains
         gs%comm_events_fired = 0
         gs%last_comm_sector = 0
         gs%last_comm_boss_sector = 0
+        gs%storm_phase = storm_dark
+        gs%storm_phase_timer = 2.5_rk
+        gs%storm_flash_fired = .false.
+        gs%loss_seq = 0
+        gs%loss_seq_timer = 0.0_rk
+        gs%boss_lance_timer = 0.0_rk
         gs%transmission_id = tx_none
         gs%transmission_next_state = state_play
         gs%transmission_visible_lines = 0
@@ -703,6 +745,8 @@ contains
             call update_rocket_audio(gs, dt)
             call update_coil_chatter(gs, dt)
             call update_boss_attack(gs, dt)
+            call update_storm_cycle(gs, dt)
+            call update_loss_sequence(gs, dt)
             call check_comm_events(gs)
             call update_demo_autopilot(gs, dt, width, height)
             if (gs%state == state_play .and. &
@@ -1014,8 +1058,68 @@ contains
                     gs%hazards(i)%active = .false.
                 end if
             end if
+
+            if (gs%sector == 4 .and. gs%hazards(i)%kind == hazard_wreck .and. gs%hazards(i)%spawn_count < 2) then
+                if (gs%hazards(i)%z < 9.0_rk .and. gs%hazards(i)%z > 5.5_rk) then
+                    block
+                        real(rk) :: chance
+                        real(rk) :: lateral
+                        lateral = abs(gs%hazards(i)%x - gs%ship_x)
+                        if (lateral < 2.0_rk) then
+                            call random_number(chance)
+                            if (chance < 0.02_rk) then
+                                call spawn_scrapwight(gs, gs%hazards(i)%x, gs%hazards(i)%y, gs%hazards(i)%z)
+                                gs%hazards(i)%spawn_count = gs%hazards(i)%spawn_count + 1
+                            end if
+                        end if
+                    end block
+                end if
+            end if
         end do
     end subroutine update_hazards
+
+    subroutine spawn_scrapwight(gs, x, y, z)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: x
+        real(rk), intent(in) :: y
+        real(rk), intent(in) :: z
+        integer :: slot
+        integer :: i
+        real(rk) :: rx
+
+        slot = 0
+        do i = 1, max_enemies
+            if (.not. gs%enemies(i)%active) then
+                slot = i
+                exit
+            end if
+        end do
+        if (slot == 0) return
+
+        call random_number(rx)
+        gs%spawn_serial = gs%spawn_serial + 1
+        gs%enemies(slot)%active = .true.
+        gs%enemies(slot)%pattern = pattern_scrapwight
+        gs%enemies(slot)%age = 0.0_rk
+        gs%enemies(slot)%phase = rx * 2.0_rk * pi
+        gs%enemies(slot)%flash = 0.0_rk
+        gs%enemies(slot)%hp = 1
+        gs%enemies(slot)%hp_max = 1
+        gs%enemies(slot)%is_boss = .false.
+        gs%enemies(slot)%boss_kind = 0
+        gs%enemies(slot)%variant = variant_base
+        gs%enemies(slot)%cage_intact = .false.
+        gs%enemies(slot)%x = x
+        gs%enemies(slot)%y = y
+        gs%enemies(slot)%z = z
+        gs%enemies(slot)%vx = 0.0_rk
+        gs%enemies(slot)%vy = 0.0_rk
+        gs%enemies(slot)%speed = 7.5_rk + rx * 1.2_rk
+        gs%enemies(slot)%fire_timer = 0.0_rk
+
+        call platform_audio_beep(540.0, 0.04, 0.08)
+        call platform_audio_noise(1600.0, 0.06, 0.05, 3.5)
+    end subroutine spawn_scrapwight
 
     subroutine hazard_impact(gs, pos, kind)
         type(game_state_t), intent(inout) :: gs
@@ -1296,6 +1400,163 @@ contains
         call platform_audio_beep(real(pitch), 0.040, 0.080)
     end subroutine update_rocket_audio
 
+    subroutine update_storm_cycle(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+        real(rk), parameter :: dark_dur = 2.6_rk
+        real(rk), parameter :: preflash_dur = 0.35_rk
+        real(rk), parameter :: flash_dur = 0.55_rk
+        real(rk), parameter :: afterglow_dur = 0.85_rk
+
+        if (gs%sector /= 5) then
+            gs%storm_phase = storm_dark
+            gs%storm_phase_timer = 2.5_rk
+            gs%storm_flash_fired = .false.
+            return
+        end if
+
+        gs%storm_phase_timer = gs%storm_phase_timer - dt
+        if (gs%storm_phase_timer > 0.0_rk) return
+
+        select case (gs%storm_phase)
+        case (storm_dark)
+            gs%storm_phase = storm_preflash
+            gs%storm_phase_timer = preflash_dur
+            gs%storm_flash_fired = .false.
+            call platform_audio_beep(180.0, 0.18, 0.07)
+            call platform_audio_beep(260.0, 0.16, 0.05)
+        case (storm_preflash)
+            gs%storm_phase = storm_flash
+            gs%storm_phase_timer = flash_dur
+            if (.not. gs%storm_flash_fired) then
+                gs%storm_flash_fired = .true.
+                call platform_audio_beep(1100.0, 0.08, 0.10)
+                call platform_audio_noise(3200.0, 0.14, 0.06, 5.0)
+                call storm_strike(gs)
+                call stormveil_teleport(gs)
+            end if
+        case (storm_flash)
+            gs%storm_phase = storm_afterglow
+            gs%storm_phase_timer = afterglow_dur
+        case (storm_afterglow)
+            gs%storm_phase = storm_dark
+            gs%storm_phase_timer = dark_dur
+        case default
+            gs%storm_phase = storm_dark
+            gs%storm_phase_timer = dark_dur
+        end select
+    end subroutine update_storm_cycle
+
+    subroutine stormveil_teleport(gs)
+        type(game_state_t), intent(inout) :: gs
+        integer :: idx
+        real(rk) :: rx
+        real(rk) :: ry
+        integer :: jumps
+
+        if (gs%sector /= 5 .or. .not. gs%boss_fight) return
+        if (gs%boss_phase_pause > 0.0_rk) return
+        idx = active_boss_index(gs)
+        if (idx <= 0) return
+        if (gs%enemies(idx)%boss_kind /= 5) return
+
+        jumps = 1 + (gs%boss_phase - 1)
+        do while (jumps > 0)
+            call random_number(rx)
+            call random_number(ry)
+            gs%enemies(idx)%x = (rx * 2.0_rk - 1.0_rk) * 1.8_rk
+            gs%enemies(idx)%y = (ry * 2.0_rk - 1.0_rk) * 0.9_rk
+            jumps = jumps - 1
+        end do
+        gs%enemies(idx)%flash = 0.6_rk
+        call platform_audio_beep(620.0, 0.05, 0.10)
+    end subroutine stormveil_teleport
+
+    subroutine storm_strike(gs)
+        type(game_state_t), intent(inout) :: gs
+        integer :: i
+        real(rk) :: dx
+        real(rk) :: dy
+
+        if (gs%ship_iframe > 0.0_rk) return
+        do i = 1, max_hazards
+            if (.not. gs%hazards(i)%active) cycle
+            if (gs%hazards(i)%kind /= hazard_arc) cycle
+            if (gs%hazards(i)%z < 1.0_rk .or. gs%hazards(i)%z > 7.0_rk) cycle
+            dx = gs%hazards(i)%x - gs%ship_x
+            dy = gs%hazards(i)%y - gs%ship_y
+            if (abs(dx) < 0.9_rk .and. abs(dy) < 0.35_rk) then
+                call hazard_impact(gs, vec3(gs%hazards(i)%x, gs%hazards(i)%y, gs%hazards(i)%z), hazard_arc)
+                gs%ship_iframe = 0.9_rk
+                gs%hazards(i)%active = .false.
+                return
+            end if
+        end do
+    end subroutine storm_strike
+
+    pure integer function storm_alpha(gs, alpha) result(a)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: alpha
+        real(rk) :: scaled
+
+        if (gs%sector /= 5) then
+            a = alpha
+            return
+        end if
+        scaled = real(alpha, rk) * storm_brightness(gs)
+        a = max(0, min(255, nint(scaled)))
+    end function storm_alpha
+
+    pure real(rk) function storm_brightness(gs) result(b)
+        type(game_state_t), intent(in) :: gs
+        if (gs%sector /= 5) then
+            b = 1.0_rk
+            return
+        end if
+        select case (gs%storm_phase)
+        case (storm_dark); b = 0.35_rk
+        case (storm_preflash); b = 0.55_rk
+        case (storm_flash); b = 1.35_rk
+        case (storm_afterglow); b = 0.90_rk
+        case default; b = 1.0_rk
+        end select
+    end function storm_brightness
+
+    subroutine update_loss_sequence(gs, dt)
+        type(game_state_t), intent(inout) :: gs
+        real(rk), intent(in) :: dt
+
+        if (gs%loss_seq == 0) return
+        gs%loss_seq_timer = gs%loss_seq_timer - dt
+        if (gs%loss_seq_timer > 0.0_rk) return
+
+        select case (gs%loss_seq)
+        case (1)
+            call trigger_comm(gs, "V", "GOT THREE. ONE MORE--")
+            gs%loss_seq = 2; gs%loss_seq_timer = 2.6_rk
+        case (2)
+            call trigger_comm(gs, "K", "VANE, DISENGAGE")
+            gs%loss_seq = 3; gs%loss_seq_timer = 2.4_rk
+        case (3)
+            call trigger_comm(gs, "V", "TOO CLOSE. SEE YOU ON THE OTH--")
+            call platform_audio_noise(1800.0, 0.30, 0.10, 5.5)
+            gs%loss_seq = 4; gs%loss_seq_timer = 2.6_rk
+        case (4)
+            gs%loss_seq = 0; gs%loss_seq_timer = 0.0_rk
+        case (11)
+            call trigger_comm(gs, "E", "IT ONLY FIRES ON THE FLASH")
+            gs%loss_seq = 12; gs%loss_seq_timer = 2.6_rk
+        case (12)
+            call trigger_comm(gs, "E", "LEAD, TAKE THE EYE. I'VE--")
+            call platform_audio_noise(2000.0, 0.32, 0.11, 6.0)
+            gs%loss_seq = 13; gs%loss_seq_timer = 2.8_rk
+        case (13)
+            gs%loss_seq = 0; gs%loss_seq_timer = 0.0_rk
+        case default
+            gs%loss_seq = 0; gs%loss_seq_timer = 0.0_rk
+        end select
+    end subroutine update_loss_sequence
+
     subroutine update_shards(gs, dt)
         type(game_state_t), intent(inout) :: gs
         real(rk), intent(in) :: dt
@@ -1566,9 +1827,30 @@ contains
 
         gs%hazards(slot)%active = .true.
         gs%hazards(slot)%kind = kind
+        gs%hazards(slot)%spawn_count = 0
         gs%hazards(slot)%x = (rx_in * 2.0_rk - 1.0_rk) * x_spread
         gs%hazards(slot)%y = (ry_in * 2.0_rk - 1.0_rk) * y_spread
         if (kind == hazard_spine) gs%hazards(slot)%y = -0.40_rk + ry_in * 0.25_rk
+
+        if (kind == hazard_lattice .and. gs%sector == 6) then
+            block
+                real(rk) :: corridor
+                real(rk) :: side
+                real(rk) :: side_x
+                select case (gs%sector_wave)
+                case (1); corridor = 1.10_rk
+                case (2); corridor = 0.85_rk
+                case default; corridor = 0.60_rk
+                end select
+                if (rx_in > 0.5_rk) then
+                    side = 1.0_rk
+                else
+                    side = -1.0_rk
+                end if
+                side_x = corridor + (x_spread - corridor) * (ry_in * 0.6_rk + 0.4_rk)
+                gs%hazards(slot)%x = side * side_x
+            end block
+        end if
         gs%hazards(slot)%z = 34.0_rk + rs * 8.0_rk
         gs%hazards(slot)%vx = (rv - 0.5_rk) * 0.15_rk
         gs%hazards(slot)%vy = 0.0_rk
@@ -1784,6 +2066,9 @@ contains
         do i = 1, max_enemies
             if (.not. gs%enemies(i)%active) cycle
             if (.not. phantom_visible(gs%enemies(i), gs%time)) cycle
+            if (gs%enemies(i)%is_boss .and. gs%enemies(i)%boss_kind == 5) then
+                if (gs%storm_phase /= storm_flash .and. gs%storm_phase /= storm_afterglow) cycle
+            end if
             pos = enemy_position(gs%enemies(i))
             if (.not. project_point(pos, cam, width, height, candidate_screen, depth, scale_px)) cycle
             if (gs%enemies(i)%is_boss) then
@@ -1791,6 +2076,8 @@ contains
                     boss_scale(gs%enemies(i)%boss_kind, pos%z) * scale_px * 0.88_rk)
             else if (gs%enemies(i)%pattern == pattern_lancer) then
                 candidate_radius = max(22.0_rk, gs%lancer_model%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
+            else if (gs%enemies(i)%pattern == pattern_scrapwight) then
+                candidate_radius = max(18.0_rk, gs%scrapwight_model%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
             else
                 candidate_radius = max(20.0_rk, gs%enemy_models(gs%enemies(i)%pattern)%radius * enemy_scale(pos%z) * scale_px * 0.85_rk)
             end if
@@ -2144,6 +2431,9 @@ contains
             enemy_position%x = enemy_position%x + enemy%vx * enemy%age * 0.85_rk &
                 + 0.55_rk * sin(enemy%age * 1.3_rk + enemy%phase)
             enemy_position%y = enemy_position%y + 0.28_rk * sin(enemy%age * 1.0_rk + enemy%phase)
+        case (pattern_scrapwight)
+            enemy_position%x = enemy_position%x + 0.4_rk * sin(enemy%age * 5.0_rk + enemy%phase)
+            enemy_position%y = enemy_position%y + 0.3_rk * sin(enemy%age * 4.2_rk + enemy%phase)
         case default
             orbit_r = 1.0_rk + 0.25_rk * sin(enemy%age * 1.5_rk)
             orbit_w = enemy%age * 2.4_rk + enemy%phase
@@ -2391,8 +2681,107 @@ contains
             call platform_audio_beep(160.0, 0.12, 0.20)
             call platform_audio_beep(260.0, 0.14, 0.16)
             call platform_audio_beep(420.0, 0.18, 0.14)
+            call boss_phase_signature(gs, index, target_phase)
         end if
     end subroutine maybe_trigger_boss_phase
+
+    subroutine boss_phase_signature(gs, index, phase)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: index
+        integer, intent(in) :: phase
+        type(vec3) :: origin
+
+        origin = enemy_position(gs%enemies(index))
+        select case (gs%enemies(index)%boss_kind)
+        case (1)
+            call boss_fire_lance_pair(gs, origin, 2)
+        case (2)
+            call boss_fire_lance_pair(gs, origin, 3)
+        case (3)
+            if (phase == 2) then
+                call boss_fire_lance_pair(gs, origin, 2)
+            else
+                call boss_fire_lance_pair(gs, origin, 3)
+                call boss_spawn_struts(gs, origin, 3)
+            end if
+        case (4)
+            call boss_absorb(gs, index)
+        case (5)
+            call stormveil_teleport(gs)
+        case (6)
+            if (phase == 2) then
+                call boss_fire_lance_pair(gs, origin, 3)
+            else
+                call boss_fire_lance_pair(gs, origin, 5)
+            end if
+        end select
+    end subroutine boss_phase_signature
+
+    subroutine boss_fire_lance_pair(gs, origin, count)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3), intent(in) :: origin
+        integer, intent(in) :: count
+        integer :: n
+        real(rk) :: offset
+        type(vec3) :: p
+
+        do n = 1, count
+            offset = (real(n, rk) - real(count + 1, rk) * 0.5_rk) * 0.5_rk
+            p = vec3(origin%x + offset, origin%y, origin%z)
+            call spawn_rocket(gs, p)
+        end do
+    end subroutine boss_fire_lance_pair
+
+    subroutine boss_spawn_struts(gs, origin, count)
+        type(game_state_t), intent(inout) :: gs
+        type(vec3), intent(in) :: origin
+        integer, intent(in) :: count
+        integer :: slot
+        integer :: i
+        integer :: n
+        real(rk) :: rx
+        real(rk) :: rs
+
+        do n = 1, count
+            slot = 0
+            do i = 1, max_hazards
+                if (.not. gs%hazards(i)%active) then
+                    slot = i
+                    exit
+                end if
+            end do
+            if (slot == 0) return
+            call random_number(rx)
+            call random_number(rs)
+            gs%hazards(slot)%active = .true.
+            gs%hazards(slot)%kind = hazard_lattice
+            gs%hazards(slot)%spawn_count = 0
+            gs%hazards(slot)%x = (rx * 2.0_rk - 1.0_rk) * 2.0_rk
+            gs%hazards(slot)%y = (rs - 0.5_rk) * 1.4_rk
+            gs%hazards(slot)%z = max(18.0_rk, origin%z + 4.0_rk)
+            gs%hazards(slot)%vx = 0.0_rk
+            gs%hazards(slot)%vy = 0.0_rk
+            gs%hazards(slot)%speed = 9.2_rk
+            gs%hazards(slot)%rot = rs * 2.0_rk * pi
+            gs%hazards(slot)%rot_speed = (rs - 0.5_rk) * 1.8_rk
+            gs%hazards(slot)%tilt = rx * pi
+            gs%hazards(slot)%scale = 0.85_rk + rs * 0.20_rk
+            gs%hazards(slot)%radius = 0.75_rk
+        end do
+    end subroutine boss_spawn_struts
+
+    subroutine boss_absorb(gs, index)
+        type(game_state_t), intent(inout) :: gs
+        integer, intent(in) :: index
+        type(vec3) :: origin
+
+        origin = enemy_position(gs%enemies(index))
+        gs%enemies(index)%hp_max = gs%enemies(index)%hp_max
+        call spawn_explosion(gs, origin, 60, 220, 140, 60)
+        gs%enemies(index)%speed = gs%enemies(index)%speed * 1.2_rk
+        call platform_audio_beep(80.0, 0.38, 0.22)
+        call platform_audio_noise(1400.0, 0.25, 0.10, 2.0)
+    end subroutine boss_absorb
 
     pure integer function sector_wave_quota(sector_wave) result(quota)
         integer, intent(in) :: sector_wave
@@ -2476,6 +2865,7 @@ contains
         gs%boss_phase_pause = 0.0_rk
         gs%boss_phase_banner = 0.0_rk
         gs%boss_phase_banner_number = 0
+        gs%boss_lance_timer = 3.0_rk
         gs%sector_intro_timer = 0.0_rk
         gs%message = "WARNING - " // trim(boss_name(gs%sector))
         gs%message_timer = 2.0_rk
@@ -2565,6 +2955,8 @@ contains
         gs%message_timer = 2.4_rk
         gs%spawn_timer = 1.2_rk
         gs%boss_cleared_sector = 0
+        gs%storm_phase = storm_dark
+        gs%storm_phase_timer = 2.5_rk
         call platform_audio_beep(320.0, 0.10, 0.16)
         call platform_audio_beep(480.0, 0.12, 0.14)
         call platform_audio_beep(640.0, 0.14, 0.12)
@@ -2574,6 +2966,12 @@ contains
                 call start_transmission(gs, tx_sector_two, state_play)
             case (3)
                 call start_transmission(gs, tx_sector_three, state_play)
+            case (5)
+                gs%loss_seq = 1
+                gs%loss_seq_timer = 1.2_rk
+            case (6)
+                gs%loss_seq = 11
+                gs%loss_seq_timer = 1.2_rk
             end select
         end if
     end subroutine complete_boss_victory
@@ -2590,6 +2988,17 @@ contains
 
         index = active_boss_index(gs)
         if (index <= 0) return
+
+        if (gs%boss_phase >= 2) then
+            gs%boss_lance_timer = gs%boss_lance_timer - dt
+            if (gs%boss_lance_timer <= 0.0_rk) then
+                pos = enemy_position(gs%enemies(index))
+                call spawn_rocket(gs, pos)
+                gs%boss_lance_timer = max(1.8_rk, 3.4_rk - real(gs%boss_phase - 1, rk) * 0.6_rk)
+            end if
+        else
+            gs%boss_lance_timer = 2.6_rk
+        end if
 
         gs%boss_attack_timer = gs%boss_attack_timer - dt
         if (gs%boss_attack_timer > 0.0_rk) return
@@ -2937,6 +3346,7 @@ contains
             call render_rockets(gs, width, height)
             call render_shards(gs, width, height)
             call render_boss_attack(gs, width, height)
+            call render_storm_overlay(gs, width, height)
         end if
 
         select case (gs%state)
@@ -3001,7 +3411,7 @@ contains
                 sr = max(shade / 3, pr * shade / 255)
                 sg = max(shade / 3, pg * shade / 255)
                 sb = max(shade / 3, pb * shade / 255)
-                call draw_line_glow(nint(s1%x), nint(s1%y), nint(s2%x), nint(s2%y), sr, sg, sb, 130, 1)
+                call draw_line_glow(nint(s1%x), nint(s1%y), nint(s2%x), nint(s2%y), sr, sg, sb, storm_alpha(gs, 130), 1)
             end if
         end do
     end subroutine render_stars
@@ -3038,7 +3448,7 @@ contains
             ok1 = project_point(p1, cam, width, height, a, d1)
             ok2 = project_point(p2, cam, width, height, b, d2)
             if (ok1 .and. ok2) then
-                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), dr, dg, db, 58, 1)
+                call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), dr, dg, db, storm_alpha(gs, 58), 1)
             end if
         end do
 
@@ -3049,7 +3459,7 @@ contains
             ok2 = project_point(p2, cam, width, height, b, d2)
             if (ok1 .and. ok2) then
                 call draw_line_glow(nint(a%x), nint(a%y), nint(b%x), nint(b%y), &
-                    max(0, dr * 3 / 4), max(0, dg * 3 / 4), max(0, db * 3 / 4), 52, 1)
+                    max(0, dr * 3 / 4), max(0, dg * 3 / 4), max(0, db * 3 / 4), storm_alpha(gs, 52), 1)
             end if
         end do
     end subroutine render_depth_grid
@@ -3079,8 +3489,26 @@ contains
             if (gs%hazards(i)%z < 5.0_rk) boost = 1.25_rk
             model_idx = gs%hazards(i)%kind
             if (model_idx < 1 .or. model_idx > max_hazard_kinds) model_idx = hazard_shard
-            call append_model_lines(gs%hazard_models(model_idx), xf, cam, width, height, &
-                gs%lines, line_count, max_lines, alpha, boost)
+
+            if (gs%hazards(i)%kind == hazard_arc) then
+                select case (gs%storm_phase)
+                case (storm_preflash)
+                    boost = boost * 1.5_rk
+                    alpha = max(alpha, 180)
+                case (storm_flash)
+                    boost = boost * 1.8_rk
+                    alpha = 255
+                case (storm_afterglow)
+                    boost = boost * 1.25_rk
+                case default
+                    alpha = max(alpha, 140)
+                end select
+                call append_model_lines(gs%hazard_models(model_idx), xf, cam, width, height, &
+                    gs%lines, line_count, max_lines, alpha, boost)
+            else
+                call append_model_lines(gs%hazard_models(model_idx), xf, cam, width, height, &
+                    gs%lines, line_count, max_lines, storm_alpha(gs, alpha), boost)
+            end if
         end do
 
         call draw_screen_lines(gs%lines, line_count)
@@ -3117,6 +3545,30 @@ contains
             call draw_line_glow(cx + size / 2, cy, cx - size, cy, 255, 200, 80, alpha, 1)
         end if
     end subroutine render_brace_indicator
+
+    subroutine render_storm_overlay(gs, width, height)
+        type(game_state_t), intent(in) :: gs
+        integer, intent(in) :: width
+        integer, intent(in) :: height
+        integer :: alpha
+        integer :: y
+        integer :: step
+        real(rk) :: phase_frac
+        integer :: inset
+
+        if (gs%sector /= 5) return
+        if (gs%storm_phase /= storm_flash) return
+
+        phase_frac = min(1.0_rk, max(0.0_rk, gs%storm_phase_timer / 0.55_rk))
+        alpha = max(0, min(180, nint(140.0_rk * phase_frac)))
+        step = max(6, height / 90)
+        inset = max(4, width / 300)
+        y = inset
+        do while (y < height - inset)
+            call draw_line_glow(inset, y, width - inset, y, 255, 255, 255, alpha, 1)
+            y = y + step
+        end do
+    end subroutine render_storm_overlay
 
     subroutine render_impact_edges(gs, width, height)
         type(game_state_t), intent(in) :: gs
@@ -3160,7 +3612,11 @@ contains
                 xf%scale = boss_scale(boss_kind, pos%z)
                 boost = merge(2.6_rk, 1.15_rk, gs%enemies(i)%flash > 0.0_rk)
                 alpha = max(170, min(255, nint(320.0_rk - pos%z * 3.0_rk)))
-                call append_model_lines(gs%boss_models(boss_kind), xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+                if (boss_kind == 5 .and. gs%storm_phase /= storm_flash .and. gs%storm_phase /= storm_afterglow) then
+                    alpha = max(60, alpha / 4)
+                    boost = boost * 0.7_rk
+                end if
+                call append_model_lines(gs%boss_models(boss_kind), xf, cam, width, height, gs%lines, line_count, max_lines, storm_alpha(gs, alpha), boost)
             else if (gs%enemies(i)%pattern == pattern_lancer) then
                 xf%rotation = vec3(0.10_rk * sin(gs%enemies(i)%age * 0.9_rk), &
                                    gs%enemies(i)%age * 0.30_rk + gs%enemies(i)%phase, &
@@ -3170,7 +3626,15 @@ contains
                 if (gs%enemies(i)%fire_timer < 0.6_rk .and. gs%enemies(i)%fire_timer > 0.0_rk) &
                     boost = boost + 0.6_rk * (0.6_rk - gs%enemies(i)%fire_timer)
                 alpha = max(110, min(255, nint(290.0_rk - pos%z * 3.2_rk)))
-                call append_model_lines(gs%lancer_model, xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+                call append_model_lines(gs%lancer_model, xf, cam, width, height, gs%lines, line_count, max_lines, storm_alpha(gs, alpha), boost)
+            else if (gs%enemies(i)%pattern == pattern_scrapwight) then
+                xf%rotation = vec3(0.40_rk * sin(gs%enemies(i)%age * 3.6_rk), &
+                                   gs%enemies(i)%age * 1.20_rk + gs%enemies(i)%phase, &
+                                   0.50_rk * sin(gs%enemies(i)%age * 5.2_rk))
+                xf%scale = enemy_scale(pos%z) * 0.80_rk
+                boost = merge(2.5_rk, 1.1_rk, gs%enemies(i)%flash > 0.0_rk)
+                alpha = max(140, min(255, nint(300.0_rk - pos%z * 3.6_rk)))
+                call append_model_lines(gs%scrapwight_model, xf, cam, width, height, gs%lines, line_count, max_lines, storm_alpha(gs, alpha), boost)
             else
                 xf%rotation = vec3(0.22_rk * sin(gs%enemies(i)%age), &
                                    gs%enemies(i)%age * 0.55_rk + gs%enemies(i)%phase, &
@@ -3182,7 +3646,7 @@ contains
                     alpha = max(30, alpha / 5)
                     boost = boost * 0.6_rk
                 end if
-                call append_model_lines(gs%enemy_models(gs%enemies(i)%pattern), xf, cam, width, height, gs%lines, line_count, max_lines, alpha, boost)
+                call append_model_lines(gs%enemy_models(gs%enemies(i)%pattern), xf, cam, width, height, gs%lines, line_count, max_lines, storm_alpha(gs, alpha), boost)
                 if (gs%enemies(i)%variant == variant_juggernaut .and. gs%enemies(i)%cage_intact) then
                     block
                         type(transform3) :: cage_xf
@@ -3235,14 +3699,14 @@ contains
             boost = 1.2_rk + 0.35_rk * (0.5_rk + 0.5_rk * sin(gs%rockets(i)%trail_phase * 22.0_rk))
             alpha = max(150, min(255, nint(300.0_rk - gs%rockets(i)%position%z * 4.0_rk)))
             call append_model_lines(gs%rocket_model, xf, cam, width, height, &
-                gs%lines, line_count, max_lines, alpha, boost)
+                gs%lines, line_count, max_lines, storm_alpha(gs, alpha), boost)
 
             tail = add3(gs%rockets(i)%position, scale3(gs%rockets(i)%velocity, -0.12_rk))
             ok1 = project_point(gs%rockets(i)%position, cam, width, height, s1, d1)
             ok2 = project_point(tail, cam, width, height, s2, d2)
             if (ok1 .and. ok2) then
                 call draw_line_glow(nint(s1%x), nint(s1%y), nint(s2%x), nint(s2%y), &
-                    255, 220, 140, alpha, 2)
+                    255, 220, 140, storm_alpha(gs, alpha), 2)
             end if
         end do
         call draw_screen_lines(gs%lines, line_count)
@@ -3666,8 +4130,15 @@ contains
                     small_unit, 255, 210, 90, 200)
             end block
         end if
+        if (gs%last_ending == ending_close) then
+            call draw_centered_text("LAST RUN: GATE CLOSED", width / 2, &
+                height / 2 + height / 8 + 28 * small_unit, small_unit, 255, 120, 120, 190)
+        else if (gs%last_ending == ending_hold) then
+            call draw_centered_text("LAST RUN: GATE HELD", width / 2, &
+                height / 2 + height / 8 + 28 * small_unit, small_unit, 120, 220, 255, 190)
+        end if
         call draw_centered_text("PRESS ENTER OR SPACE", width / 2, height - height / 5, max(4, width / 230), 255, 235, 80, pulse)
-        call draw_centered_text("MOUSE OR WASD AIM   CLICK OR SPACE FIRE   F12 CAPTURE", width / 2, height - height / 8, small_unit, 0, 190, 255, 185)
+        call draw_centered_text("WASD STEER   MOUSE OR ARROWS AIM   CLICK/SPACE FIRE   F12 CAPTURE", width / 2, height - height / 8, small_unit, 0, 190, 255, 185)
     end subroutine render_title
 
     subroutine render_transmission(gs, width, height)
@@ -3860,11 +4331,13 @@ contains
 
         if (gs%finale_choice_hover == 1) then
             gs%last_ending = ending_close
+            if (.not. gs%demo_mode) call save_last_ending(ending_close)
             call start_transmission(gs, tx_ending_close, state_victory)
             call platform_audio_beep(80.0, 0.40, 0.22)
             call platform_audio_beep(55.0, 0.55, 0.18)
         else
             gs%last_ending = ending_hold
+            if (.not. gs%demo_mode) call save_last_ending(ending_hold)
             call start_transmission(gs, tx_ending_hold, state_victory)
             call platform_audio_beep(440.0, 0.18, 0.16)
             call platform_audio_beep(660.0, 0.22, 0.14)

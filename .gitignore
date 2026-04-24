@@ -1,6 +1,7 @@
 build/
 capture.bmp
 highscore.dat
+ending.dat
 *.mod
 *.smod
 *.o

@@ -57,6 +57,7 @@ module model_library
     public :: build_lancer_model
     public :: build_pickup_model
     public :: build_cage_model
+    public :: build_scrapwight_model
     public :: append_model_lines
 
 contains
@@ -930,6 +931,34 @@ contains
             call set_edge(model, edge_idx, 8 + i, 1, 255, 140, 80)
         end do
     end subroutine build_maw_core_model
+
+    subroutine build_scrapwight_model(model)
+        type(wire_model), intent(out) :: model
+
+        call allocate_model(model, "scrapwight", 7, 11, 0.75_rk)
+
+        model%vertices = [ &
+            vec3( 0.00_rk,  0.00_rk,  0.70_rk), &
+            vec3(-0.45_rk,  0.22_rk, -0.10_rk), &
+            vec3( 0.45_rk,  0.18_rk, -0.10_rk), &
+            vec3(-0.30_rk, -0.40_rk, -0.05_rk), &
+            vec3( 0.30_rk, -0.35_rk, -0.05_rk), &
+            vec3(-0.15_rk,  0.05_rk, -0.70_rk), &
+            vec3( 0.15_rk, -0.05_rk, -0.70_rk)  &
+        ]
+
+        call set_edge(model, 1, 1, 2, 220, 180, 80)
+        call set_edge(model, 2, 1, 3, 220, 180, 80)
+        call set_edge(model, 3, 2, 4, 180, 130, 60)
+        call set_edge(model, 4, 3, 5, 180, 130, 60)
+        call set_edge(model, 5, 4, 5, 200, 160, 70)
+        call set_edge(model, 6, 2, 6, 160, 80, 40)
+        call set_edge(model, 7, 3, 7, 160, 80, 40)
+        call set_edge(model, 8, 4, 6, 140, 70, 40)
+        call set_edge(model, 9, 5, 7, 140, 70, 40)
+        call set_edge(model, 10, 6, 7, 220, 60, 40)
+        call set_edge(model, 11, 1, 5, 200, 120, 60)
+    end subroutine build_scrapwight_model
 
     subroutine build_cage_model(model)
         type(wire_model), intent(out) :: model
